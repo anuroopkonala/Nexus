@@ -1,0 +1,9 @@
+import "stdlib.nx"
+
+fn main() {
+    System.print_str("--- Testing Math ---")
+    let s = Math.sin(0.5)
+    System.print(s)
+}
+
+main()

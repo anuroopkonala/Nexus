@@ -1,0 +1,24 @@
+fn test_add() {
+    let a = 10
+    let b = 20
+    let c = a + b
+    if c == 30 {
+        print(1)
+    } else {
+        print(0)
+    }
+}
+
+fn test_sub() {
+    let a = 10
+    let b = 20
+    let c = b - a
+    if c == 10 {
+        print(1)
+    } else {
+        print(0)
+    }
+}
+
+test_add()
+test_sub()

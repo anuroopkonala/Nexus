@@ -1,0 +1,76 @@
+## ================================================================
+## NEXUS SELF-HOSTED LEXER v2.0
+## Pure .nxasm ??? No C, No other languages
+## Register Map:
+##   0  = FILE* of source (pointer bank)
+##   1  = current char (float, ASCII code)
+##   2  = EOF = -1.0
+##   3  = SPACE = 32.0
+##   4  = NEWLINE = 10.0
+##   5  = TAB = 9.0
+##   6  = token buffer (pointer bank, 256 bytes malloc)
+##   7  = token length counter (float)
+##   8  = temp bool result
+##   9  = temp char for lookahead
+##  10  = const 1.0
+##  11  = const 0.0
+##  50  = filename ptr (pointer bank)
+##  92  = 256.0 (for ALLOC size)
+## ================================================================
+
+LOAD_STR simple_print.nxasm 50
+FOPEN 0 50
+LOAD -1.0 2
+LOAD 32.0 3
+LOAD 10.0 4
+LOAD 9.0 5
+LOAD 1.0 10
+LOAD 0.0 11
+LOAD -1.0 13
+LOAD 256.0 92
+
+LOAD 65536.0 92
+LOAD 65536.0 93
+ALLOC 50 93   # token array in reg 50
+LOAD 0.0 60   # token_offset in reg 60
+LOAD 8.0 100  # +8
+LOAD 32.0 101 # +32
+LOAD 1.0 102  # +1 counter
+LOAD 0.0 65   # token count
+ALLOC 6 92    # string buffer in reg 6 (using same size for simplicity)
+
+
+## ================================================================
+## ## ================================================================
+LABEL 100: MAIN LOOP
+## ================================================================
+LABEL 100
+
+EQ 8 13 2
+JMP_F 8 101
+FGETC 1 0
+JMP 102
+LABEL 101
+MOV 1 13
+LOAD -1.0 13
+LABEL 102
+
+## EOF?
+EQ 8 1 2
+JMP_F 8 103
+LOAD 20.0 20
+STORE_F 50 60 20  # Store TOK_EOF
+JMP 800           # JUMP TO AST PARSER MAIN LOOP!
+LABEL 103
+
+## Skip whitespace
+LOAD 32.0 15
+EQ 8 1 15
+JMP_F 8 104
+JMP 100
+LABEL 104
+
+LOAD 9.0 15
+EQ 8 1 15
+JMP_F 8 105
+HALT

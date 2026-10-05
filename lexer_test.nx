@@ -1,0 +1,68 @@
+fn test_print_and_strings() {
+    print(42)
+    print("hello world")
+}
+
+fn test_unary_neg() {
+    let x = -7
+    let y = -x
+    print(y)
+}
+
+fn test_break() {
+    let i = 0
+    while i < 100 {
+        if i == 5 {
+            break
+        }
+        i = i + 1
+    }
+    return i
+}
+
+fn test_continue() {
+    let total = 0
+    for j in 1, 11 {
+        if j == 5 {
+            continue
+        }
+        total = total + j
+    }
+    return total
+}
+
+fn test_arrays() {
+    let arr = [10, 20, 30, 40, 50]
+    print(arr[0])
+    print(arr[2])
+    print(arr[4])
+}
+
+test_print_and_strings()
+test_unary_neg()
+let b = test_break()
+print(b)
+let s = test_continue()
+print(s)
+test_arrays()
+
+import "math.nx"
+
+class Point {
+    let x = 0
+    let y = 0
+}
+
+fn test_dict() {
+    let d = { "a": 1, "b": 2 }
+}
+
+fn test_try() {
+    try {
+        let a = 1
+    } catch e {
+        let b = 2
+    }
+    throw "error"
+}
+

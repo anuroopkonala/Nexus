@@ -1,0 +1,8 @@
+class Math2 {
+    fn get_pi() {
+        return 3.14
+    }
+}
+
+let m = Math2
+print(m.get_pi())

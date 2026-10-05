@@ -1,0 +1,29 @@
+class System {
+    fn print(val) {
+        __asm__(1, val)
+    }
+    
+    fn print_str(val) {
+        __asm__(6, val)
+    }
+}
+
+class File {
+    fn open(path) {
+        return __asm__(2, path)
+    }
+
+    fn read(file) {
+        return __asm__(3, file)
+    }
+}
+
+class Math {
+    fn sin(x) {
+        return __asm__(4, x)
+    }
+    
+    fn sqrt(x) {
+        return __asm__(5, x)
+    }
+}
