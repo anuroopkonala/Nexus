@@ -39,11 +39,11 @@ bad_token_fmt: .asciz "BAD_TOKEN: %s\n"
 
 fmt_argc: .asciz "ARGC=%d\n"
 
-file_name: .asciz "boot.nxasm"
+file_name: .asciz "tests/vm/boot.nxasm"
 read_mode: .asciz "r"
 scan_fmt: .asciz "%s"
 str_hex_fmt: .asciz "HEX [%p] = %016llX\n"
-err_msg: .asciz "Failed to open boot.nxasm\n"
+err_msg: .asciz "Failed to open tests/vm/boot.nxasm\n"
 
 str_FREAD: .asciz "FREAD"
 str_FWRITE: .asciz "FWRITE"
@@ -944,7 +944,7 @@ main:
     
     # ---------------------------------------------------------
     # ASSEMBLY LEXER & PARSER
-    # Reads .nxasm file from argv[1] or boot.nxasm by default
+    # Reads .nxasm file from argv[1] or tests/vm/boot.nxasm by default
     # rbp+16 = argc, rbp+24 = argv on Windows x64
     # ---------------------------------------------------------
     mov rcx, [rip + argc_store]

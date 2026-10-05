@@ -1,6 +1,6 @@
 ## ================================================================
 ## NEXUS SELF-HOSTED LEXER v2.0
-## Pure .nxasm — No C, No other languages
+## Pure .nxasm ??? No C, No other languages
 ## Register Map:
 ##   0  = FILE* of source (pointer bank)
 ##   1  = current char (float, ASCII code)
@@ -18,7 +18,7 @@
 ##  92  = 256.0 (for ALLOC size)
 ## ================================================================
 
-LOAD_STR test_dict.nx 50
+LOAD_STR tests/nx/test_dict.nx 50
 FOPEN 0 50
 LOAD -1.0 2
 LOAD 32.0 3
@@ -88,7 +88,7 @@ JMP_F 8 106
 JMP 100
 LABEL 106
 
-## Newline — skip silently
+## Newline ??? skip silently
 LOAD 10.0 15
 EQ 8 1 15
 JMP_F 8 107
@@ -217,7 +217,7 @@ ADD 65 65 102
 JMP 100
 LABEL 3004
 
-## '/' — check for '//' comment
+## '/' ??? check for '//' comment
 LOAD 47.0 15
 EQ 8 1 15
 JMP_F 8 119
@@ -237,7 +237,7 @@ ADD 65 65 102
 JMP 100
 LABEL 119
 
-## '=' — check for '=='
+## '=' ??? check for '=='
 LOAD 61.0 15
 EQ 8 1 15
 JMP_F 8 120
@@ -263,7 +263,7 @@ ADD 65 65 102
 JMP 100
 LABEL 120
 
-## '!' — check for '!='
+## '!' ??? check for '!='
 LOAD 33.0 15
 EQ 8 1 15
 JMP_F 8 1222
@@ -288,7 +288,7 @@ JMP 100
 
 LABEL 1222
 
-## '<' — check for '<='
+## '<' ??? check for '<='
 LOAD 60.0 15
 EQ 8 1 15
 JMP_F 8 122
@@ -314,7 +314,7 @@ ADD 65 65 102
 JMP 100
 LABEL 122
 
-## '>' — check for '>='
+## '>' ??? check for '>='
 LOAD 62.0 15
 EQ 8 1 15
 JMP_F 8 123
@@ -340,7 +340,7 @@ ADD 65 65 102
 JMP 100
 LABEL 123
 
-## '[' → token 37.0
+## '[' ??? token 37.0
 LOAD 91.0 15
 EQ 8 1 15
 JMP_F 8 147
@@ -351,7 +351,7 @@ ADD 65 65 102
 JMP 100
 LABEL 147
 
-## ']' → token 38.0  
+## ']' ??? token 38.0  
 LOAD 93.0 15
 EQ 8 1 15
 JMP_F 8 148
@@ -362,7 +362,7 @@ ADD 65 65 102
 JMP 100
 LABEL 148
 
-## '"' — string literal
+## '"' ??? string literal
 LOAD 34.0 15
 EQ 8 1 15
 JMP_F 8 124
@@ -625,7 +625,7 @@ ADD 65 65 102
 
 JMP 100
 
-## Maybe "import" — starts with "im"
+## Maybe "import" ??? starts with "im"
 LABEL 285
 LOAD 1.0 17
 LOAD_B 16 6 17
@@ -1137,7 +1137,7 @@ ADD 60 60 101
 ADD 65 65 102
 JMP 100
 
-## No keyword matched — emit IDENT
+## No keyword matched ??? emit IDENT
 LABEL 299
 
 STORE_B 6 7 11
@@ -1521,7 +1521,7 @@ JMP 630
 LABEL 614
 PUSH_PTR 215
 PUSH 216
-CALL 600       # parse element â†’ r131
+CALL 600       # parse element ???????? r131
 POP 216
 POP_PTR 215
 ## store at 16+8*count
@@ -2149,7 +2149,7 @@ LOAD 8.0 120
 EQ 121 130 120
 JMP_F 121 791   # if no '(' skip
 CALL 501        # consume '('
-CALL 600        # parse expression ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ r131
+CALL 600        # parse expression ????????????????????????????????????????? r131
 CALL 501        # consume ')'
 PUSH_PTR 131
 LOAD 16.0 124
