@@ -200,6 +200,7 @@ op_load_raw:
     mov rcx, [rsi]     # dest reg
     add rsi, 8
     mov [rdi + rcx * 8], rax  # Write to float_bank!
+    mov [rbx + rcx * 8], rax  # Also write to ptr_bank!
     NEXT
 op_add:
     mov rcx, [rsi]
@@ -371,6 +372,8 @@ op_dict_get:
     cmp r10, 0
     je .dict_get_null
     mov r11, [rdi + r9 * 8]     # READ KEY FROM FLOAT BANK!
+    cmp r11, 0
+    je .dict_get_not_found
     mov r13, [r10+8]
 .dict_get_loop:
     cmp r13, 0
@@ -780,7 +783,11 @@ op_print_c:
 op_print_str:
     mov r8, [rsi]        # ptr_reg (register number)
     add rsi, 8
-    mov r11, [rbx + r8 * 8]  # r11 = raw char* pointer (callee-saved on Windows)
+    mov r11, [rdi + r8 * 8]  # check float_bank
+    test r11, r11
+    jnz 1f
+    mov r11, [rbx + r8 * 8]  # fallback to ptr_bank
+1:
     push rsi
     push rdi
     push rbx             # extra push to align stack to 16
@@ -792,6 +799,40 @@ op_print_str:
     pop rbx
     pop rdi
     pop rsi
+    NEXT
+
+op_sin:
+    mov rcx, [rsi]       # dest
+    mov r8,  [rsi+8]     # src
+    add rsi, 16
+    push rsi
+    push rdi
+    push rbx
+    sub rsp, 40
+    movsd xmm0, [rdi + r8 * 8]
+    call sin
+    add rsp, 40
+    pop rbx
+    pop rdi
+    pop rsi
+    movsd [rdi + rcx * 8], xmm0
+    NEXT
+
+op_sqrt:
+    mov rcx, [rsi]       # dest
+    mov r8,  [rsi+8]     # src
+    add rsi, 16
+    push rsi
+    push rdi
+    push rbx
+    sub rsp, 40
+    movsd xmm0, [rdi + r8 * 8]
+    call sqrt
+    add rsp, 40
+    pop rbx
+    pop rdi
+    pop rsi
+    movsd [rdi + rcx * 8], xmm0
     NEXT
 
 op_sub:
@@ -5595,8 +5636,35 @@ main:
     lea rdx, [rip + str_GTE]
     call strcmp
     test eax, eax
-    jne .check_GET_OP_NOT_FOUND
+    jne .check_GET_OP_PRINT_STR
     lea r15, [rip + op_gte]
+    jmp .get_op_found
+
+.check_GET_OP_PRINT_STR:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_PRINT_STR]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_SIN
+    lea r15, [rip + op_print_str]
+    jmp .get_op_found
+
+.check_GET_OP_SIN:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_SIN]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_SQRT
+    lea r15, [rip + op_sin]
+    jmp .get_op_found
+
+.check_GET_OP_SQRT:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_SQRT]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_NOT_FOUND
+    lea r15, [rip + op_sqrt]
     jmp .get_op_found
 
 .check_GET_OP_NOT_FOUND:

@@ -1,0 +1,17 @@
+class Point {
+    let x = 10
+    let y = 20
+
+    fn get_x() {
+        return 10
+    }
+
+    fn get_y() {
+        return 20
+    }
+}
+
+let p = Point
+print(p.x)
+print(p.y)
+print(p.get_x())
