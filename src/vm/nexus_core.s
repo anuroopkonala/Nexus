@@ -477,6 +477,7 @@ op_alloc:
     pop rdi
     pop rsi
     mov [rbx + r12 * 8], rax
+    mov [rdi + r12 * 8], rax
     NEXT
 
 gc_malloc:
@@ -934,6 +935,10 @@ op_load_f:
     mov r9,  [rsi+16]    # offset_reg (float bank)
     add rsi, 24
     mov rax, [rbx + r8 * 8]    # ptr from POINTER BANK
+    test rax, rax
+    jnz 1f
+    mov rax, [rdi + r8 * 8]    # fallback to float bank
+1:
     movsd xmm0, [rdi + r9 * 8]
     cvttsd2si rdx, xmm0        # offset
     movsd xmm0, [rax + rdx]    # load 64-bit float
@@ -946,6 +951,10 @@ op_store_f:
     mov r10, [rsi+16]    # val_reg (float bank)
     add rsi, 24
     mov rax, [rbx + r8 * 8]    # ptr from POINTER BANK
+    test rax, rax
+    jnz 2f
+    mov rax, [rdi + r8 * 8]    # fallback to float bank
+2:
     movsd xmm0, [rdi + r9 * 8]
     cvttsd2si rdx, xmm0        # offset
     movsd xmm0, [rdi + r10 * 8] # val from float bank
@@ -5663,8 +5672,44 @@ main:
     lea rdx, [rip + str_SQRT]
     call strcmp
     test eax, eax
-    jne .check_GET_OP_NOT_FOUND
+    jne .check_GET_OP_ALLOC
     lea r15, [rip + op_sqrt]
+    jmp .get_op_found
+
+.check_GET_OP_ALLOC:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_ALLOC]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_LOAD_F
+    lea r15, [rip + op_alloc]
+    jmp .get_op_found
+
+.check_GET_OP_LOAD_F:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_LOAD_F]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_STORE_F
+    lea r15, [rip + op_load_f]
+    jmp .get_op_found
+
+.check_GET_OP_STORE_F:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_STORE_F]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_HALT
+    lea r15, [rip + op_store_f]
+    jmp .get_op_found
+
+.check_GET_OP_HALT:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_HALT]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_NOT_FOUND
+    lea r15, [rip + op_halt]
     jmp .get_op_found
 
 .check_GET_OP_NOT_FOUND:
