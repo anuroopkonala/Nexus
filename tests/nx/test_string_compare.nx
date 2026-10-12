@@ -1,0 +1,30 @@
+import "stdlib.nx"
+
+fn main() {
+    System.print_str("--- Testing String Comparison ---")
+    
+    let s1 = "hello"
+    let s2 = "world"
+    let s3 = "hello"
+    let s4 = "hel" + "lo"
+    
+    if (s1 == s3) {
+        System.print_str("Literal equality PASS")
+    }
+    
+    if (s1 == s4) {
+        System.print_str("Concat equality PASS")
+    }
+    
+    if (s1 != s2) {
+        System.print_str("Inequality PASS")
+    }
+    
+    let same = s1 == s4
+    System.print(same)
+    
+    let diff = s1 != s2
+    System.print(diff)
+}
+
+main()

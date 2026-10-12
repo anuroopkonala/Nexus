@@ -1,0 +1,39 @@
+import "stdlib.nx"
+
+fn main() {
+    System.print_str("--- Testing Expanded Builtins ---")
+    
+    // Test len() on strings
+    let s = "Hello, Nexus!"
+    let l = len(s)
+    System.print(l)
+    
+    let l2 = len("abc")
+    System.print(l2)
+    
+    // Test to_string() on numbers
+    let n = 42
+    let s_num = to_string(n)
+    let msg = "The answer is: " + s_num
+    System.print_str(msg)
+    
+    let pi_str = to_string(3.14159)
+    System.print_str("Pi: " + pi_str)
+    
+    // Test Math.floor and Math.ceil
+    let f1 = Math.floor(3.8)
+    System.print(f1)
+    
+    let c1 = Math.ceil(3.2)
+    System.print(c1)
+    
+    let f2 = Math.floor(7.0)
+    System.print(f2)
+    
+    let c2 = Math.ceil(7.0)
+    System.print(c2)
+    
+    System.print_str("All expanded builtins PASS!")
+}
+
+main()

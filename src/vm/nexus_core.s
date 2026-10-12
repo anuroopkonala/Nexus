@@ -21,6 +21,11 @@
 .extern fread
 .extern fwrite
 .extern gets
+.extern fmod
+.extern floor
+.extern ceil
+.extern sprintf
+
 
 .section .data
 fmt_addrs: .asciz "DEBUG: op_load_raw = %p, op_print = %p\n"
@@ -61,6 +66,12 @@ str_COS: .asciz "COS"
 str_POW: .asciz "POW"
 str_ABS: .asciz "ABS"
 str_EXIT: .asciz "EXIT"
+str_MOD: .asciz "MOD"
+str_FLOOR: .asciz "FLOOR"
+str_CEIL: .asciz "CEIL"
+str_STR_LEN: .asciz "STR_LEN"
+str_TO_STR: .asciz "TO_STR"
+str_to_str_fmt: .asciz "%g"
 str_PANIC: .asciz "PANIC"
 panic_msg: .asciz "VM PANIC!\n"
 stack_trace_msg: .asciz "Stack trace:\n  <main>\n"
@@ -308,7 +319,43 @@ op_eq:
     mov r9,  [rsi+16]
     add rsi, 24
     mov rax, [rdi + r8 * 8]
-    cmp rax, [rdi + r9 * 8]
+    mov rdx, [rdi + r9 * 8]
+    mov r10, 0x7FF0000000000000
+    test rax, r10
+    jnz .eq_float
+    cmp rax, 0x10000
+    jb .eq_float
+    mov r10, 0x00007FFFFFFFFFFF
+    cmp rax, r10
+    ja .eq_float
+    mov r10, 0x7FF0000000000000
+    test rdx, r10
+    jnz .eq_float
+    cmp rdx, 0x10000
+    jb .eq_float
+    mov r10, 0x00007FFFFFFFFFFF
+    cmp rdx, r10
+    ja .eq_float
+    push rsi
+    push rdi
+    push rbx
+    push rcx
+    sub rsp, 32
+    mov rcx, rax
+    call strcmp
+    add rsp, 32
+    pop rcx
+    pop rbx
+    pop rdi
+    pop rsi
+    test eax, eax
+    sete al
+    and eax, 1
+    cvtsi2sd xmm0, eax
+    movsd [rdi + rcx * 8], xmm0
+    NEXT
+.eq_float:
+    cmp rax, rdx
     sete al
     and eax, 1
     cvtsi2sd xmm0, eax
@@ -946,6 +993,125 @@ op_exit:
     cvttsd2si rcx, xmm0
     call exit
 
+op_mod:
+    mov r12, [rsi]       # dest
+    mov r8,  [rsi+8]     # src1
+    mov r9,  [rsi+16]    # src2
+    add rsi, 24
+    push rsi
+    push rdi
+    push rbx
+    push r12
+    sub rsp, 32
+    movsd xmm0, [rdi + r8 * 8]
+    movsd xmm1, [rdi + r9 * 8]
+    call fmod
+    add rsp, 32
+    pop r12
+    pop rbx
+    pop rdi
+    pop rsi
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_floor:
+    mov r12, [rsi]       # dest
+    mov r8,  [rsi+8]     # src
+    add rsi, 16
+    push rsi
+    push rdi
+    push rbx
+    push r12
+    sub rsp, 32
+    movsd xmm0, [rdi + r8 * 8]
+    call floor
+    add rsp, 32
+    pop r12
+    pop rbx
+    pop rdi
+    pop rsi
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_ceil:
+    mov r12, [rsi]       # dest
+    mov r8,  [rsi+8]     # src
+    add rsi, 16
+    push rsi
+    push rdi
+    push rbx
+    push r12
+    sub rsp, 32
+    movsd xmm0, [rdi + r8 * 8]
+    call ceil
+    add rsp, 32
+    pop r12
+    pop rbx
+    pop rdi
+    pop rsi
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_str_len:
+    mov r12, [rsi]       # dest
+    mov r8,  [rsi+8]     # src
+    add rsi, 16
+    mov rax, [rbx + r8 * 8]
+    test rax, rax
+    jnz .sl_have_ptr
+    mov rax, [rdi + r8 * 8]
+.sl_have_ptr:
+    push rsi
+    push rdi
+    push rbx
+    push r12
+    sub rsp, 32
+    mov rcx, rax
+    call strlen
+    add rsp, 32
+    pop r12
+    pop rbx
+    pop rdi
+    pop rsi
+    cvtsi2sd xmm0, rax
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_to_str:
+    mov r12, [rsi]       # dest
+    mov r8,  [rsi+8]     # src
+    add rsi, 16
+    mov rax, [rdi + r8 * 8]
+
+    push rsi
+    push rdi
+    push rbx
+    push r12
+    push rax             # slot at [rsp + 40]
+    push rax             # slot at [rsp + 32] (padding / buffer holder)
+    sub rsp, 32          # 48 + 32 = 80 bytes (16-byte aligned)
+
+    mov rcx, 64
+    call malloc
+    mov [rsp + 32], rax  # save buffer pointer into stack slot
+
+    mov r8, [rsp + 40]   # float bits from stack
+    mov rcx, rax         # buffer pointer
+    lea rdx, [rip + str_to_str_fmt]
+    movq xmm2, r8
+    call sprintf
+
+    mov rax, [rsp + 32]  # restore buffer pointer
+    add rsp, 48          # discard 32 shadow + 2 pushes
+    pop r12              # restore dest reg
+    pop rbx
+    pop rdi
+    pop rsi
+
+    mov [rbx + r12 * 8], rax
+    mov [rdi + r12 * 8], rax
+    NEXT
+
 op_str_cat:
     mov r12, [rsi]       # dest
     mov r8,  [rsi+8]     # src1
@@ -1059,9 +1225,48 @@ op_gt:
     NEXT
 
 op_neq:
-    mov rcx, [rsi]; mov r8, [rsi+8]; mov r9, [rsi+16]; add rsi, 24
+    mov rcx, [rsi]
+    mov r8,  [rsi+8]
+    mov r9,  [rsi+16]
+    add rsi, 24
     mov rax, [rdi + r8 * 8]
-    cmp rax, [rdi + r9 * 8]
+    mov rdx, [rdi + r9 * 8]
+    mov r10, 0x7FF0000000000000
+    test rax, r10
+    jnz .neq_float
+    cmp rax, 0x10000
+    jb .neq_float
+    mov r10, 0x00007FFFFFFFFFFF
+    cmp rax, r10
+    ja .neq_float
+    mov r10, 0x7FF0000000000000
+    test rdx, r10
+    jnz .neq_float
+    cmp rdx, 0x10000
+    jb .neq_float
+    mov r10, 0x00007FFFFFFFFFFF
+    cmp rdx, r10
+    ja .neq_float
+    push rsi
+    push rdi
+    push rbx
+    push rcx
+    sub rsp, 32
+    mov rcx, rax
+    call strcmp
+    add rsp, 32
+    pop rcx
+    pop rbx
+    pop rdi
+    pop rsi
+    test eax, eax
+    setne al
+    and eax, 1
+    cvtsi2sd xmm0, eax
+    movsd [rdi + rcx * 8], xmm0
+    NEXT
+.neq_float:
+    cmp rax, rdx
     setne al
     and eax, 1
     cvtsi2sd xmm0, eax
@@ -6041,8 +6246,53 @@ main:
     lea rdx, [rip + str_EXIT]
     call strcmp
     test eax, eax
-    jne .check_GET_OP_HALT
+    jne .check_GET_OP_MOD
     lea r15, [rip + op_exit]
+    jmp .get_op_found
+
+.check_GET_OP_MOD:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_MOD]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_FLOOR
+    lea r15, [rip + op_mod]
+    jmp .get_op_found
+
+.check_GET_OP_FLOOR:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_FLOOR]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_CEIL
+    lea r15, [rip + op_floor]
+    jmp .get_op_found
+
+.check_GET_OP_CEIL:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_CEIL]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_STR_LEN
+    lea r15, [rip + op_ceil]
+    jmp .get_op_found
+
+.check_GET_OP_STR_LEN:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_STR_LEN]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_TO_STR
+    lea r15, [rip + op_str_len]
+    jmp .get_op_found
+
+.check_GET_OP_TO_STR:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_TO_STR]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_HALT
+    lea r15, [rip + op_to_str]
     jmp .get_op_found
 
 .check_GET_OP_HALT:

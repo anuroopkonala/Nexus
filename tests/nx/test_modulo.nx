@@ -1,0 +1,23 @@
+import "stdlib.nx"
+
+fn main() {
+    System.print_str("--- Testing Modulo Operator ---")
+    
+    let a = 10 % 3
+    System.print(a)
+    
+    let b = 17 % 5
+    System.print(b)
+    
+    let c = 20 % 4
+    System.print(c)
+    
+    let d = 7 % 2
+    System.print(d)
+    
+    if (d == 1) {
+        System.print_str("Modulo condition works!")
+    }
+}
+
+main()

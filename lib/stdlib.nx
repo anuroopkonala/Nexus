@@ -42,4 +42,12 @@ class Math {
     fn abs(x) {
         return __asm__(10, x)
     }
+
+    fn floor(x) {
+        return __asm__(11, x)
+    }
+
+    fn ceil(x) {
+        return __asm__(12, x)
+    }
 }
