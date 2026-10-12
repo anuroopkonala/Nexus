@@ -260,42 +260,52 @@ This opcode:
 
 ## File Structure
 
-### Core VM
-- `nexus_core.s` -- The entire VM in x86-64 assembly (6567 lines).
-  Contains: entry point, .nxasm parser, 47 opcode handlers, GC,
-  dictionary implementation, NEXT macro, label resolution.
-
-### Compiler Pipeline (concatenated into compiler_full.nxasm)
-- `parser_lexer.nxasm` -- Lexer: tokenizes .nx source files (1293 lines)
-- `parser_utils.nxasm` -- Utility subroutines for the parser (95 lines)
-- `parser_expr.nxasm` -- Expression parser: numbers, binops, dicts, idents (467 lines)
-- `parser_stmt.nxasm` -- Statement parser: let, if, while, print, fn, class (590 lines)
-- `compiler_expr.nxasm` -- Expression compiler: emits bytecode for exprs (402 lines)
-- `compiler_stmt.nxasm` -- Statement compiler: emits bytecode for stmts (374 lines)
-- `compiler_main.nxasm` -- Compiler entry point and initialization (31 lines)
-- `compiler_full.nxasm` -- All of the above concatenated (auto-generated)
-
-### Interpreter (tree-walking, alternative backend)
-- `eval_expr.nxasm` -- Expression evaluator (tree-walking interpreter)
-- `eval_stmt.nxasm` -- Statement evaluator
-- `eval_env.nxasm` -- Variable environment for interpreter
-- `eval_fn_env.nxasm` -- Function environment for interpreter
-
-### Test Programs (.nx = Nexus source, .nxasm = raw bytecode)
-- `test_dict.nx` -- Dictionary creation and member access
-- `test_let.nx` -- Variable declaration and printing
-- `test_if.nx` -- If/else and while loops
-- `test_if2.nx` -- Simple if statement
-- `test_math.nx` -- Function definitions with arithmetic
-- `test_classes.nx` -- Class definition and method calls
-- `test_stdlib.nx` -- Standard library imports
-- `compiler.nx` -- AST class definitions for the compiler itself
-- `stdlib.nx` -- Standard library (System, File, Math classes)
-- `tests/vm/` -- Direct VM-level bytecode tests
-
-### Build and Utility Scripts
-- `build.ps1` -- PowerShell build script
-- `run_all_tests.ps1` -- Test runner
+```
+nexus_baremetal/
+|-- bin/
+|   `-- nexus_core.exe               # Compiled direct-threaded VM executable
+|-- docs/                            # Additional documentation
+|-- lib/                             # Standard library (.nx)
+|-- scripts/
+|   |-- build/                       # Build automation scripts (PowerShell)
+|   `-- patches/                     # Development and analysis utilities
+|-- src/
+|   |-- vm/
+|   |   `-- nexus_core.s             # Virtual machine core in x86-64 assembly
+|   |-- compiler/
+|   |   |-- parser_lexer.nxasm       # Lexer: tokenizes .nx source code
+|   |   |-- parser_utils.nxasm       # Parser helper routines
+|   |   |-- parser_expr.nxasm        # Expression parser (recursive descent)
+|   |   |-- parser_stmt.nxasm        # Statement parser (let, if, while, fn, etc.)
+|   |   |-- compiler_expr.nxasm      # Expression bytecode generator
+|   |   |-- compiler_stmt.nxasm      # Statement bytecode generator
+|   |   |-- compiler_main.nxasm      # Compiler bootstrap entry point
+|   |   `-- compiler_full.nxasm      # Full concatenated compiler suite
+|   `-- evaluator/
+|       |-- eval_expr.nxasm          # Tree-walking expression evaluator
+|       |-- eval_stmt.nxasm          # Tree-walking statement evaluator
+|       |-- eval_env.nxasm           # Variable environment
+|       `-- eval_fn_env.nxasm        # Function call environment
+|-- tests/
+|   |-- nx/                          # High-level Nexus language tests (.nx)
+|   |   |-- test_let.nx              # Variable declaration and assignment
+|   |   |-- test_math.nx             # Arithmetic expressions and functions
+|   |   |-- test_dict.nx             # Dictionary creation and key lookup
+|   |   |-- test_if.nx               # Conditional branching and while loops
+|   |   |-- test_if2.nx              # Single-branch if statements
+|   |   |-- test_simple.nx           # Basic variable binding and printing
+|   |   `-- test_number.nx           # Number literal evaluation
+|   `-- vm/                          # Low-level VM bytecode tests (.nxasm)
+|       |-- boot.nxasm               # VM bootstrap verification
+|       |-- test_math.nxasm          # Arithmetic opcodes (ADD, SUB, MUL, DIV)
+|       |-- test_control_flow.nxasm  # Jump and branching opcodes
+|       |-- test_call_ret.nxasm      # Call stack and return opcodes
+|       |-- test_heap.nxasm          # Heap allocation and memory access
+|       `-- test_io.nxasm            # Terminal I/O opcodes
+|-- nexus.ps1                        # Main CLI build and run tool
+|-- run_all_tests.ps1                # Comprehensive test runner
+`-- README.md                        # Complete project documentation
+```
 
 
 ## The VM Core (nexus_core.s)
@@ -342,6 +352,8 @@ Arithmetic:
 Comparison:
   LT dst a b            -- dst = (a < b) ? 1.0 : 0.0
   GT dst a b            -- dst = (a > b) ? 1.0 : 0.0
+  LTE dst a b           -- dst = (a <= b) ? 1.0 : 0.0
+  GTE dst a b           -- dst = (a >= b) ? 1.0 : 0.0
   EQ dst a b            -- dst = (a == b) ? 1.0 : 0.0
   NEQ dst a b           -- dst = (a != b) ? 1.0 : 0.0
   NOT dst src           -- dst = (src == 0) ? 1.0 : 0.0
@@ -353,6 +365,7 @@ Control Flow:
   JMP_F_O cond offset   -- Conditional jump to absolute offset
   LABEL id              -- Define jump target (resolved at parse time)
   CALL label            -- Push return address, jump to label
+  CALL_O buf off        -- Push return address, jump to [buf + off]
   RET                   -- Pop return address, jump back
   HALT                  -- Stop execution
 
@@ -588,34 +601,51 @@ and `op_dict_get` handlers:
 ### Prerequisites
 
 - Windows x86-64
-- GCC with GNU assembler (MinGW-w64 recommended)
+- GCC with GNU assembler (MinGW-w64)
 - PowerShell
 
-### Build the VM
+### Build the Baremetal VM
+
+Build the VM executable (`bin/nexus_core.exe`) from `src/vm/nexus_core.s`:
 
 ```powershell
-gcc -o nexus_core.exe nexus_core.s -lmsvcrt -lkernel32 -nostdlib -e main
+.\nexus.ps1 build
 ```
 
-### Run a raw bytecode program
+Or invoke GCC directly:
 
 ```powershell
-.\nexus_core.exe tests\vm\test_math.nxasm
+gcc -o bin/nexus_core.exe src/vm/nexus_core.s
 ```
 
-### Compile and run a Nexus program
+### Compile and Run a Nexus Program
 
-First, concatenate the compiler pipeline into a single file:
+To compile and execute a `.nx` source program through the baremetal compiler pipeline:
 
 ```powershell
-cmd /c "type parser_lexer.nxasm parser_utils.nxasm parser_expr.nxasm parser_stmt.nxasm compiler_expr.nxasm compiler_stmt.nxasm compiler_main.nxasm > compiler_full.nxasm"
+.\nexus.ps1 run tests/nx/test_let.nx
 ```
 
-Then run it (the .nx filename is currently hardcoded or passed via the
-compiler's file-open logic):
+Or for arithmetic and function calls:
 
 ```powershell
-.\nexus_core.exe compiler_full.nxasm
+.\nexus.ps1 run tests/nx/test_math.nx
+```
+
+### Run Low-Level Bytecode Tests
+
+Execute a `.nxasm` bytecode program directly on the VM:
+
+```powershell
+.\bin/nexus_core.exe tests/vm/test_math.nxasm
+```
+
+### Run the Full Test Suite
+
+Run the automated test runner to build and test all components:
+
+```powershell
+.\run_all_tests.ps1
 ```
 
 Expected output for `test_dict.nx` (`let p = { "x": 100 }; print(p.x);`):

@@ -70,7 +70,10 @@ str_FOPEN: .asciz "FOPEN"
 str_FGETC: .asciz "FGETC"
 str_PRINT_C: .asciz "PRINT_C"
 str_PRINT_STR: .asciz "PRINT_STR"
+str_CALL_O: .asciz "CALL_O"
 str_EQ: .asciz "EQ"
+str_LTE: .asciz "LTE"
+str_GTE: .asciz "GTE"
 str_SUB: .asciz "SUB"
 str_MUL: .asciz "MUL"
 str_DIV: .asciz "DIV"
@@ -89,6 +92,8 @@ str_FREE: .asciz "FREE"
 str_LOAD_B: .asciz "LOAD_B"
 str_STORE_B: .asciz "STORE_B"
 str_EXEC_DYNAMIC: .asciz "EXEC_DYNAMIC"
+val_true: .double 1.0
+val_false: .double 0.0
 str_JMP_O: .asciz "JMP_O"
 str_JMP_F_O: .asciz "JMP_F_O"
 str_STORE_I: .asciz "STORE_I"
@@ -117,6 +122,8 @@ val_buf: .space 256
 reg_buf: .space 256
 labels_array: .space 81920
 call_stack: .space 81920
+
+
 call_sp: .space 8
 val_stack: .space 81920
 val_sp: .space 8
@@ -611,6 +618,7 @@ op_exec_dynamic:
     inc r9
     mov [r8], r9
     mov rsi, [rbx + rcx * 8]
+
     NEXT
 
 op_jmp_o:
@@ -654,6 +662,22 @@ op_load_raw_ptr:
     mov [rdi + r9 * 8], r8
     NEXT
 
+op_call_o:
+    mov rcx, [rsi]
+    mov r8, [rsi+8]
+    add rsi, 16
+    lea r10, [rip + call_sp]
+    mov r11, [r10]
+    lea r12, [rip + call_stack]
+    mov [r12 + r11 * 8], rsi
+    inc r11
+    mov [r10], r11
+    mov r9, [rbx + rcx * 8]
+    movsd xmm0, [rdi + r8 * 8]
+    cvttsd2si rax, xmm0
+    lea rsi, [r9 + rax]
+    NEXT
+
 op_call:
     mov rcx, [rsi]       # read label index
     add rsi, 8
@@ -665,6 +689,41 @@ op_call:
     mov [r8], r9
     lea r11, [rip + labels_array]
     mov rsi, [r11 + rcx * 8]
+    NEXT
+
+
+op_lte:
+    mov rcx, [rsi]; add rsi, 8
+    mov r8, [rsi]; add rsi, 8
+    mov r9, [rsi]; add rsi, 8
+    movsd xmm0, [rdi + rcx * 8]
+    movsd xmm1, [rdi + r8 * 8]
+    comisd xmm0, xmm1
+    jbe .lte_true
+    lea rax, [rip + val_false]
+    jmp .lte_end
+.lte_true:
+    lea rax, [rip + val_true]
+.lte_end:
+    movsd xmm0, [rax]
+    movsd [rdi + r9 * 8], xmm0
+    NEXT
+
+op_gte:
+    mov rcx, [rsi]; add rsi, 8
+    mov r8, [rsi]; add rsi, 8
+    mov r9, [rsi]; add rsi, 8
+    movsd xmm0, [rdi + rcx * 8]
+    movsd xmm1, [rdi + r8 * 8]
+    comisd xmm0, xmm1
+    jae .gte_true
+    lea rax, [rip + val_false]
+    jmp .gte_end
+.gte_true:
+    lea rax, [rip + val_true]
+.gte_end:
+    movsd xmm0, [rax]
+    movsd [rdi + r9 * 8], xmm0
     NEXT
 
 op_ret:
@@ -5446,8 +5505,98 @@ main:
     
     call strcmp
     cmp eax, 0
-    jne .check_GET_OP_NOT_FOUND
+    jne .check_GET_OP_CALL_O
     lea r15, [rip + op_ret]
+    jmp .get_op_found
+
+.check_GET_OP_CALL_O:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_CALL_O]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_EQ
+    lea r15, [rip + op_call_o]
+    jmp .get_op_found
+
+.check_GET_OP_EQ:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_EQ]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_SUB
+    lea r15, [rip + op_eq]
+    jmp .get_op_found
+
+.check_GET_OP_SUB:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_SUB]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_MUL
+    lea r15, [rip + op_sub]
+    jmp .get_op_found
+
+.check_GET_OP_MUL:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_MUL]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_DIV
+    lea r15, [rip + op_mul]
+    jmp .get_op_found
+
+.check_GET_OP_DIV:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_DIV]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_NEQ
+    lea r15, [rip + op_div]
+    jmp .get_op_found
+
+.check_GET_OP_NEQ:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_NEQ]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_LT
+    lea r15, [rip + op_neq]
+    jmp .get_op_found
+
+.check_GET_OP_LT:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_LT]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_GT
+    lea r15, [rip + op_lt]
+    jmp .get_op_found
+
+.check_GET_OP_GT:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_GT]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_LTE
+    lea r15, [rip + op_gt]
+    jmp .get_op_found
+
+.check_GET_OP_LTE:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_LTE]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_GTE
+    lea r15, [rip + op_lte]
+    jmp .get_op_found
+
+.check_GET_OP_GTE:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_GTE]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_NOT_FOUND
+    lea r15, [rip + op_gte]
     jmp .get_op_found
 
 .check_GET_OP_NOT_FOUND:
