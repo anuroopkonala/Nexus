@@ -1,0 +1,14 @@
+import "stdlib.nx"
+
+fn main() {
+    let sum = 0
+    let i = 0
+    while i < 5000000 {
+        sum = sum + i
+        i = i + 1
+    }
+    System.print_str("Nexus 5M loop done!")
+    System.print(sum)
+}
+
+main()

@@ -26,7 +26,9 @@ $failed = 0
 foreach ($t in $tests) {
     Write-Host "Running $t..." -NoNewline
     $out = .\bin\nexus_core.exe $t 2>&1
-    if ($LASTEXITCODE -eq 0 -and $out -match "VM execution complete") {
+    $code = $LASTEXITCODE
+    $outStr = $out -join "`n"
+    if ($code -eq 0 -and $outStr -match "VM execution complete") {
         Write-Host " [PASS]" -ForegroundColor Green
         $passed++
     } else {
