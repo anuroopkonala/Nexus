@@ -59,6 +59,8 @@ str_SQRT: .asciz "SQRT"
 str_SIN: .asciz "SIN"
 str_COS: .asciz "COS"
 str_POW: .asciz "POW"
+str_ABS: .asciz "ABS"
+str_EXIT: .asciz "EXIT"
 str_PANIC: .asciz "PANIC"
 panic_msg: .asciz "VM PANIC!\n"
 stack_trace_msg: .asciz "Stack trace:\n  <main>\n"
@@ -213,6 +215,18 @@ op_add:
     mov r8,  [rsi+8]
     mov r9,  [rsi+16]
     add rsi, 24
+    mov rax, [rdi + r8 * 8]
+    mov r10, 0x7FF0000000000000
+    test rax, r10
+    jnz .add_float
+    cmp rax, 0x10000
+    jb .add_float
+    mov r10, 0x00007FFFFFFFFFFF
+    cmp rax, r10
+    ja .add_float
+    sub rsi, 24
+    jmp op_str_cat
+.add_float:
     movsd xmm0, [rdi + r8 * 8]
     addsd xmm0, [rdi + r9 * 8]
     movsd [rdi + rcx * 8], xmm0
@@ -261,8 +275,27 @@ op_print:
     sub rsp, 40
     movsd xmm1, [rdi + rcx * 8]
     movq rdx, xmm1
+
+    mov rax, rdx
+    mov r8, 0x7FF0000000000000
+    test rax, r8
+    jnz .print_float
+    cmp rax, 0x10000
+    jb .print_float
+    mov r8, 0x00007FFFFFFFFFFF
+    cmp rax, r8
+    ja .print_float
+
+    lea rcx, [rip + str_fmt]
+    call printf
+    jmp .print_done
+
+.print_float:
+    movq xmm1, rdx
     lea rcx, [rip + debug_fmt]
     call printf
+
+.print_done:
     add rsp, 40
     pop rbx
     pop rdi
@@ -446,11 +479,13 @@ op_dict_get:
 .dict_get_found:
     mov rax, [r13+8]
     mov [rdi + r12 * 8], rax
+    mov [rbx + r12 * 8], rax
     NEXT
 .dict_get_not_found:
 .dict_get_null:
     pxor xmm0, xmm0
     movsd [rdi + r12 * 8], xmm0
+    mov qword ptr [rbx + r12 * 8], 0
     NEXT
 
 op_panic:
@@ -770,6 +805,7 @@ op_pop:
     lea r10, [rip + val_stack]
     mov rax, [r10 + r9 * 8]
     mov [rdi + rcx * 8], rax
+    mov [rbx + rcx * 8], rax
     NEXT
 
 op_print_c:
@@ -812,37 +848,182 @@ op_print_str:
     NEXT
 
 op_sin:
-    mov rcx, [rsi]       # dest
+    mov r12, [rsi]       # dest
     mov r8,  [rsi+8]     # src
     add rsi, 16
     push rsi
     push rdi
     push rbx
-    sub rsp, 40
+    push r12
+    sub rsp, 32
     movsd xmm0, [rdi + r8 * 8]
     call sin
-    add rsp, 40
+    add rsp, 32
+    pop r12
     pop rbx
     pop rdi
     pop rsi
-    movsd [rdi + rcx * 8], xmm0
+    movsd [rdi + r12 * 8], xmm0
     NEXT
 
 op_sqrt:
-    mov rcx, [rsi]       # dest
+    mov r12, [rsi]       # dest
     mov r8,  [rsi+8]     # src
     add rsi, 16
     push rsi
     push rdi
     push rbx
-    sub rsp, 40
+    push r12
+    sub rsp, 32
     movsd xmm0, [rdi + r8 * 8]
     call sqrt
-    add rsp, 40
+    add rsp, 32
+    pop r12
     pop rbx
     pop rdi
     pop rsi
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_cos:
+    mov r12, [rsi]       # dest
+    mov r8,  [rsi+8]     # src
+    add rsi, 16
+    push rsi
+    push rdi
+    push rbx
+    push r12
+    sub rsp, 32
+    movsd xmm0, [rdi + r8 * 8]
+    call cos
+    add rsp, 32
+    pop r12
+    pop rbx
+    pop rdi
+    pop rsi
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_pow:
+    mov r12, [rsi]       # dest
+    mov r8,  [rsi+8]     # src1
+    mov r9,  [rsi+16]    # src2
+    add rsi, 24
+    push rsi
+    push rdi
+    push rbx
+    push r12
+    sub rsp, 32
+    movsd xmm0, [rdi + r8 * 8]
+    movsd xmm1, [rdi + r9 * 8]
+    call pow
+    add rsp, 32
+    pop r12
+    pop rbx
+    pop rdi
+    pop rsi
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_abs:
+    mov rcx, [rsi]       # dest
+    mov r8,  [rsi+8]     # src
+    add rsi, 16
+    movsd xmm0, [rdi + r8 * 8]
+    pxor xmm1, xmm1
+    comisd xmm0, xmm1
+    jae .abs_done
+    subsd xmm1, xmm0
+    movaps xmm0, xmm1
+.abs_done:
     movsd [rdi + rcx * 8], xmm0
+    NEXT
+
+op_exit:
+    mov r8, [rsi]        # code_reg
+    add rsi, 8
+    movsd xmm0, [rdi + r8 * 8]
+    cvttsd2si rcx, xmm0
+    call exit
+
+op_str_cat:
+    mov r12, [rsi]       # dest
+    mov r8,  [rsi+8]     # src1
+    mov r9,  [rsi+16]    # src2
+    add rsi, 24
+
+    mov rax, [rbx + r8 * 8]
+    test rax, rax
+    jnz .sc_have_s1
+    mov rax, [rdi + r8 * 8]
+.sc_have_s1:
+    mov rdx, [rbx + r9 * 8]
+    test rdx, rdx
+    jnz .sc_have_s2
+    mov rdx, [rdi + r9 * 8]
+.sc_have_s2:
+    xor r10, r10
+.sc_s1_len:
+    cmp byte ptr [rax + r10], 0
+    je .sc_s1_done
+    inc r10
+    jmp .sc_s1_len
+.sc_s1_done:
+    xor r11, r11
+.sc_s2_len:
+    cmp byte ptr [rdx + r11], 0
+    je .sc_s2_done
+    inc r11
+    jmp .sc_s2_len
+.sc_s2_done:
+    lea rcx, [r10 + r11 + 1]
+
+    push rsi
+    push rdi
+    push rbx
+    push r12
+    push rax
+    push rdx
+    push r10
+    push r11
+    sub rsp, 40
+
+    call malloc
+
+    add rsp, 40
+    pop r11
+    pop r10
+    pop rdx
+    pop rcx
+    pop r12
+    pop rbx
+    pop rdi
+    pop rsi
+
+    xor r8, r8
+.sc_cp1:
+    cmp r8, r10
+    je .sc_cp1_done
+    mov r9b, [rcx + r8]
+    mov [rax + r8], r9b
+    inc r8
+    jmp .sc_cp1
+.sc_cp1_done:
+    xor r8, r8
+.sc_cp2:
+    cmp r8, r11
+    je .sc_cp2_done
+    mov r9b, [rdx + r8]
+    lea r13, [r10 + r8]
+    mov [rax + r13], r9b
+    inc r8
+    jmp .sc_cp2
+.sc_cp2_done:
+    lea r13, [r10 + r11]
+    mov byte ptr [rax + r13], 0
+
+    mov [rbx + r12 * 8], rax
+    mov [rdi + r12 * 8], rax
     NEXT
 
 op_sub:
@@ -5815,8 +5996,53 @@ main:
     lea rdx, [rip + str_STORE_F]
     call strcmp
     test eax, eax
-    jne .check_GET_OP_HALT
+    jne .check_GET_OP_STR_CAT
     lea r15, [rip + op_store_f]
+    jmp .get_op_found
+
+.check_GET_OP_STR_CAT:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_STR_CAT]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_COS
+    lea r15, [rip + op_str_cat]
+    jmp .get_op_found
+
+.check_GET_OP_COS:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_COS]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_POW
+    lea r15, [rip + op_cos]
+    jmp .get_op_found
+
+.check_GET_OP_POW:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_POW]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_ABS
+    lea r15, [rip + op_pow]
+    jmp .get_op_found
+
+.check_GET_OP_ABS:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_ABS]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_EXIT
+    lea r15, [rip + op_abs]
+    jmp .get_op_found
+
+.check_GET_OP_EXIT:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_EXIT]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_HALT
+    lea r15, [rip + op_exit]
     jmp .get_op_found
 
 .check_GET_OP_HALT:

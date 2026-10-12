@@ -11,7 +11,10 @@ $tests = @(
     "tests/nx/test_classes.nx",
     "tests/nx/test_class_fields.nx",
     "tests/nx/test_stdlib.nx",
-    "tests/nx/lexer_test.nx"
+    "tests/nx/lexer_test.nx",
+    "tests/nx/test_array_mutation.nx",
+    "tests/nx/test_string_concat.nx",
+    "tests/nx/test_stdlib_expanded.nx"
 )
 
 $passed = 0

@@ -1,0 +1,27 @@
+import "stdlib.nx"
+
+fn main() {
+    System.print_str("--- Testing Expanded Math & System ---")
+    
+    let c = Math.cos(0)
+    System.print(c)
+
+    let s = Math.sin(0)
+    System.print(s)
+
+    let p = Math.pow(2, 8)
+    System.print(p)
+
+    let q = Math.sqrt(49)
+    System.print(q)
+
+    let a1 = Math.abs(-123)
+    System.print(a1)
+
+    let a2 = Math.abs(456)
+    System.print(a2)
+
+    System.print_str("All expanded functions working!")
+}
+
+main()

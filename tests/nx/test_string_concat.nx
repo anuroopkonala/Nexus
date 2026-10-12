@@ -1,0 +1,8 @@
+let a = "Hello, "
+let b = "World!"
+let c = a + b
+print(c)
+
+let s = "Nexus"
+let s2 = s + " " + "Language"
+print(s2)

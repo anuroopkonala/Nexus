@@ -1,0 +1,9 @@
+import "stdlib.nx"
+
+fn main() {
+    System.print_str("Exiting with code 0...")
+    System.exit(0)
+    System.print_str("This should not be printed!")
+}
+
+main()

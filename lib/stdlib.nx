@@ -6,6 +6,10 @@ class System {
     fn print_str(val) {
         __asm__(6, val)
     }
+
+    fn exit(code) {
+        __asm__(7, code)
+    }
 }
 
 class File {
@@ -22,8 +26,20 @@ class Math {
     fn sin(x) {
         return __asm__(4, x)
     }
+
+    fn cos(x) {
+        return __asm__(8, x)
+    }
     
     fn sqrt(x) {
         return __asm__(5, x)
+    }
+
+    fn pow(x, y) {
+        return __asm__(9, x, y)
+    }
+
+    fn abs(x) {
+        return __asm__(10, x)
     }
 }
