@@ -479,6 +479,39 @@ LOAD 205.0 120
 EQ 121 201 120
 JMP_F 121 5260
 
+# Compile arguments (offset 16 = count, offset 24 = array ptr)
+LOAD 16.0 120
+LOAD_F 205 200 120
+LOAD 24.0 120
+LOAD_PTR_O 206 200 120
+LOAD 0.0 207
+
+LABEL 5256
+LT 120 207 205
+JMP_F 120 5258
+
+# offset = i * 8
+LOAD 8.0 120
+MUL 120 207 120
+
+# Compile argument expression:
+PUSH_PTR 200
+PUSH_PTR 206
+PUSH 205
+PUSH 207
+LOAD_PTR_O 200 206 120
+CALL 5200
+POP 207
+POP 205
+POP_PTR 206
+POP_PTR 200
+
+# i = i + 1
+LOAD 1.0 120
+ADD 207 207 120
+JMP 5256
+
+LABEL 5258
 # Extract callee IDENT_EXPR from offset 8
 LOAD 8.0 120
 LOAD_PTR_O 202 200 120
@@ -532,7 +565,7 @@ STORE_I 70 71 120
 LOAD 8.0 121
 ADD 71 71 121
 
-# Emit PUSH 0 (dummy return value onto val_stack)
+# Emit PUSH 0 (push return value from r0 onto val_stack)
 GET_OP PUSH 120
 STORE_F 70 71 120
 LOAD 8.0 121
