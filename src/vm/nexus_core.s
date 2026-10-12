@@ -171,55 +171,24 @@ next_fmt: .asciz "Executing: %p\n"
 .macro NEXT
     mov rax, [rsi]
     add rsi, 8
-    
-    mov edx, [rip + vm_debug]
-    cmp edx, 1
-    jne 1f
-    
-    push rsi
-    push rdi
-    push rbx
-    push r10
-    push r11
-    push rax
-    sub rsp, 32
-    
-    mov rdx, rax
-    lea rcx, [rip + next_fmt]
-    call printf
-    mov rcx, 0
-    call fflush
-
-    add rsp, 32
-    pop rax
-    pop r11
-    pop r10
-    pop rbx
-    pop rdi
-    pop rsi
-
-1:
     jmp rax
 .endm
 
 # --- Opcode Handlers ---
 op_load_const:
     movsd xmm0, [rsi]
-    add rsi, 8
-    mov rcx, [rsi]
-    add rsi, 8
+    mov rcx, [rsi+8]
+    add rsi, 16
     movsd [rdi + rcx * 8], xmm0
     NEXT
 
 # op_load_raw: stores a raw 64-bit value (pointer/integer) without float conversion
 # Bytecode: [handler_ptr][raw_64bit_value][dest_reg]
 op_load_raw:
-    mov rax, [rsi]     # raw 64-bit value
-    add rsi, 8
-    mov rcx, [rsi]     # dest reg
-    add rsi, 8
-    mov [rdi + rcx * 8], rax  # Write to float_bank!
-    mov [rbx + rcx * 8], rax  # Also write to ptr_bank!
+    mov rax, [rsi]
+    mov rcx, [rsi+8]
+    add rsi, 16
+    mov [rdi + rcx * 8], rax
     NEXT
 op_add:
     mov rcx, [rsi]
@@ -252,9 +221,11 @@ op_lt:
     movsd xmm1, [rdi + r9 * 8]
     comisd xmm0, xmm1
     setb al
-    and eax, 1
-    cvtsi2sd xmm0, eax
-    movsd [rdi + rcx * 8], xmm0
+    movzx eax, al
+    neg rax
+    mov r10, 0x3FF0000000000000
+    and rax, r10
+    mov [rdi + rcx * 8], rax
     NEXT
 
 op_jmp:
@@ -267,10 +238,9 @@ op_jmp_f:
     mov rcx, [rsi]
     mov r8,  [rsi+8]
     add rsi, 16
-    movsd xmm0, [rdi + rcx * 8]
-    pxor xmm1, xmm1
-    ucomisd xmm0, xmm1
-    jne .no_jump
+    mov rax, [rdi + rcx * 8]
+    add rax, rax
+    jnz .no_jump
     lea rcx, [rip + labels_array]
     mov rsi, [rcx + r8 * 8]
 .no_jump:
@@ -387,33 +357,32 @@ op_dict_set:
     mov r9,  [rsi+16]
     add rsi, 24
     mov r10, [rdi + r12 * 8]
-    mov r11, [rdi + r8 * 8]     # READ KEY FROM FLOAT BANK! (rdi instead of rbx)
+    mov r11, [rdi + r8 * 8]     # READ KEY FROM FLOAT BANK!
     mov r14, [rdi + r9 * 8]     # r14 holds the 64-bit value safely
     mov r13, [r10+8]
 .dict_set_loop:
-    cmp r13, 0
-    je .dict_set_not_found
+    test r13, r13
+    jz .dict_set_not_found
+    
+    mov rdx, [r13]
+    cmp r11, rdx                # FAST PATH: Pointer Equality
+    je .dict_set_found
+    
+    mov al, [r11]
+    cmp al, [rdx]
+    jne .dict_set_next
     
     mov rcx, r11
-    mov rdx, [r13]
-    
-    xor eax, eax
 .strcmp_loop_set:
-    mov r8b, byte ptr [rcx]
-    mov r9b, byte ptr [rdx]
-    cmp r8b, r9b
-    jne .strcmp_diff_set
-    cmp r8b, 0
-    je .strcmp_match_set
+    mov al, [rcx]
+    cmp al, [rdx]
+    jne .dict_set_next
+    test al, al
+    jz .dict_set_found
     inc rcx
     inc rdx
     jmp .strcmp_loop_set
-.strcmp_diff_set:
-    mov eax, 1
-.strcmp_match_set:
-    
-    cmp eax, 0
-    je .dict_set_found
+.dict_set_next:
     mov r13, [r13+16]
     jmp .dict_set_loop
 .dict_set_found:
@@ -443,8 +412,8 @@ op_dict_set:
     
     mov [rax], r11
     mov [rax+8], r14            # Store safely without xmm
-    mov r15, [r10+8]
-    mov [rax+16], r15
+    mov r8, [r10+8]
+    mov [rax+16], r8
     mov [r10+8], rax
     NEXT
 
@@ -455,72 +424,35 @@ op_dict_get:
     add rsi, 24
     mov r10, [rdi + r8 * 8]
     
-    cmp r10, 0
-    je .dict_get_null
+    test r10, r10
+    jz .dict_get_null
     mov r11, [rdi + r9 * 8]     # READ KEY FROM FLOAT BANK!
-    cmp r11, 0
-    je .dict_get_not_found
+    test r11, r11
+    jz .dict_get_not_found
     mov r13, [r10+8]
 .dict_get_loop:
-    cmp r13, 0
-    je .dict_get_not_found
+    test r13, r13
+    jz .dict_get_not_found
+    
+    mov rdx, [r13]
+    cmp r11, rdx                # FAST PATH: Pointer Equality
+    je .dict_get_found
+    
+    mov al, [r11]
+    cmp al, [rdx]
+    jne .dict_get_next
     
     mov rcx, r11
-    mov rdx, [r13]
-    
-    xor eax, eax
 .strcmp_loop_get:
-    mov eax, [rip + vm_debug]
-    cmp eax, 1
-    jne .skip_dict_debug
-
-    push rax
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    
-    sub rsp, 40
-    mov r8, rdx
-    mov rdx, rcx
-    lea rcx, [rip + str_fmt3]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rax
-.skip_dict_debug:
-    # -------------------------------------------
-
-    mov r8b, byte ptr [rcx]
-    mov r9b, byte ptr [rdx]
-    cmp r8b, r9b
-    jne .strcmp_diff_get
-    cmp r8b, 0
-    je .strcmp_match_get
+    mov al, [rcx]
+    cmp al, [rdx]
+    jne .dict_get_next
+    test al, al
+    jz .dict_get_found
     inc rcx
     inc rdx
     jmp .strcmp_loop_get
-.strcmp_diff_get:
-    mov eax, 1
-.strcmp_match_get:
-    
-    cmp eax, 0
-    je .dict_get_found
+.dict_get_next:
     mov r13, [r13+16]
     jmp .dict_get_loop
 .dict_get_found:
@@ -728,10 +660,9 @@ op_jmp_f_o:
     mov r8,  [rsi+8]
     mov r10, [rsi+16]
     add rsi, 24
-    movsd xmm0, [rdi + rcx * 8]
-    pxor xmm1, xmm1
-    ucomisd xmm0, xmm1
-    jne .no_jump_f_o
+    mov rax, [rdi + rcx * 8]
+    add rax, rax
+    jnz .no_jump_f_o
     mov r9, [rbx + r8 * 8]
     lea rsi, [r9 + r10]
 .no_jump_f_o:
@@ -788,37 +719,35 @@ op_call:
 
 
 op_lte:
-    mov rcx, [rsi]; add rsi, 8
-    mov r8, [rsi]; add rsi, 8
-    mov r9, [rsi]; add rsi, 8
+    mov rcx, [rsi]
+    mov r8,  [rsi+8]
+    mov r9,  [rsi+16]
+    add rsi, 24
     movsd xmm0, [rdi + rcx * 8]
     movsd xmm1, [rdi + r8 * 8]
     comisd xmm0, xmm1
-    jbe .lte_true
-    lea rax, [rip + val_false]
-    jmp .lte_end
-.lte_true:
-    lea rax, [rip + val_true]
-.lte_end:
-    movsd xmm0, [rax]
-    movsd [rdi + r9 * 8], xmm0
+    setbe al
+    movzx eax, al
+    neg rax
+    mov r10, 0x3FF0000000000000
+    and rax, r10
+    mov [rdi + r9 * 8], rax
     NEXT
 
 op_gte:
-    mov rcx, [rsi]; add rsi, 8
-    mov r8, [rsi]; add rsi, 8
-    mov r9, [rsi]; add rsi, 8
+    mov rcx, [rsi]
+    mov r8,  [rsi+8]
+    mov r9,  [rsi+16]
+    add rsi, 24
     movsd xmm0, [rdi + rcx * 8]
     movsd xmm1, [rdi + r8 * 8]
     comisd xmm0, xmm1
-    jae .gte_true
-    lea rax, [rip + val_false]
-    jmp .gte_end
-.gte_true:
-    lea rax, [rip + val_true]
-.gte_end:
-    movsd xmm0, [rax]
-    movsd [rdi + r9 * 8], xmm0
+    setae al
+    movzx eax, al
+    neg rax
+    mov r10, 0x3FF0000000000000
+    and rax, r10
+    mov [rdi + r9 * 8], rax
     NEXT
 
 op_ret:
@@ -833,26 +762,23 @@ op_ret:
 op_push:
     mov rcx, [rsi]       # reg num
     add rsi, 8
-    lea r8, [rip + val_sp]
-    mov r9, [r8]
-    lea r10, [rip + val_stack]
     mov rax, [rdi + rcx * 8]
-    mov [r10 + r9 * 8], rax
-    inc r9
-    mov [r8], r9
+    mov r8, [rip + val_sp]
+    lea r9, [rip + val_stack]
+    mov [r9 + r8 * 8], rax
+    inc r8
+    mov [rip + val_sp], r8
     NEXT
 
 op_pop:
     mov rcx, [rsi]
     add rsi, 8
-    lea r8, [rip + val_sp]
-    mov r9, [r8]
-    dec r9
-    mov [r8], r9
-    lea r10, [rip + val_stack]
-    mov rax, [r10 + r9 * 8]
+    mov r8, [rip + val_sp]
+    dec r8
+    mov [rip + val_sp], r8
+    lea r9, [rip + val_stack]
+    mov rax, [r9 + r8 * 8]
     mov [rdi + rcx * 8], rax
-    mov [rbx + rcx * 8], rax
     NEXT
 
 op_print_c:
@@ -1219,9 +1145,11 @@ op_gt:
     movsd xmm1, [rdi + r9 * 8]
     comisd xmm0, xmm1
     seta al
-    and eax, 1
-    cvtsi2sd xmm0, eax
-    movsd [rdi + rcx * 8], xmm0
+    movzx eax, al
+    neg rax
+    mov r10, 0x3FF0000000000000
+    and rax, r10
+    mov [rdi + rcx * 8], rax
     NEXT
 
 op_neq:
@@ -1326,14 +1254,10 @@ op_puts:
 
 op_load_f:
     mov rcx, [rsi]       # dest (float bank)
-    mov r8,  [rsi+8]     # ptr_reg (POINTER BANK)
+    mov r8,  [rsi+8]     # ptr_reg
     mov r9,  [rsi+16]    # offset_reg (float bank)
     add rsi, 24
-    mov rax, [rbx + r8 * 8]    # ptr from POINTER BANK
-    test rax, rax
-    jnz 1f
-    mov rax, [rdi + r8 * 8]    # fallback to float bank
-1:
+    mov rax, [rdi + r8 * 8]
     movsd xmm0, [rdi + r9 * 8]
     cvttsd2si rdx, xmm0        # offset
     movsd xmm0, [rax + rdx]    # load 64-bit float
@@ -1341,60 +1265,53 @@ op_load_f:
     NEXT
 
 op_store_f:
-    mov r8,  [rsi]       # ptr_reg (POINTER BANK)
+    mov r8,  [rsi]       # ptr_reg
     mov r9,  [rsi+8]     # offset_reg (float bank)
     mov r10, [rsi+16]    # val_reg (float bank)
     add rsi, 24
-    mov rax, [rbx + r8 * 8]    # ptr from POINTER BANK
-    test rax, rax
-    jnz 2f
-    mov rax, [rdi + r8 * 8]    # fallback to float bank
-2:
+    mov rax, [rdi + r8 * 8]
     movsd xmm0, [rdi + r9 * 8]
     cvttsd2si rdx, xmm0        # offset
     movsd xmm0, [rdi + r10 * 8] # val from float bank
     movsd [rax + rdx], xmm0    # store 64-bit float
     NEXT
 
-
 op_load_ptr_o:
     mov r8, [rsi]; mov r9, [rsi+8]; mov r10, [rsi+16]; add rsi, 24
-    mov rax, [rbx + r9 * 8]
+    mov rax, [rdi + r9 * 8]
     movsd xmm0, [rdi + r10 * 8]
     cvttsd2si rcx, xmm0
     mov rdx, [rax + rcx]
-    mov [rbx + r8 * 8], rdx
+    mov [rdi + r8 * 8], rdx
     NEXT
 
 op_store_ptr_o:
     mov r8, [rsi]; mov r9, [rsi+8]; mov r10, [rsi+16]; add rsi, 24
-    mov rax, [rbx + r8 * 8]
+    mov rax, [rdi + r8 * 8]
     movsd xmm0, [rdi + r9 * 8]
     cvttsd2si rcx, xmm0
-    mov rdx, [rbx + r10 * 8]
+    mov rdx, [rdi + r10 * 8]
     mov [rax + rcx], rdx
     NEXT
 
-
-
 op_push_ptr:
     mov rcx, [rsi]; add rsi, 8
-    mov rax, [rbx + rcx * 8]
-    lea r8, [rip + ptr_sp]
-    mov rdx, [r8]
+    mov rax, [rdi + rcx * 8]
+    mov rdx, [rip + ptr_sp]
     lea r9, [rip + ptr_stack]
     mov [r9 + rdx * 8], rax
-    inc qword ptr [r8]
+    inc rdx
+    mov [rip + ptr_sp], rdx
     NEXT
 
 op_pop_ptr:
     mov rcx, [rsi]; add rsi, 8
-    lea r8, [rip + ptr_sp]
-    dec qword ptr [r8]
-    mov rdx, [r8]
+    mov rdx, [rip + ptr_sp]
+    dec rdx
+    mov [rip + ptr_sp], rdx
     lea r9, [rip + ptr_stack]
     mov rax, [r9 + rdx * 8]
-    mov [rbx + rcx * 8], rax
+    mov [rdi + rcx * 8], rax
     NEXT
 
 op_halt:
@@ -1427,15 +1344,15 @@ main:
     push r15
     sub rsp, 40      # align stack for Windows x64 ABI
 
-    # Allocate VM Float Registers Array (rdi) â€” 256 regs * 8 bytes
+    # Allocate VM Float Registers Array (rdi) -------- 256 regs * 8 bytes
     mov rcx, 2048
     call malloc
     mov rdi, rax
     
-    # Allocate VM Pointer Registers Array (rbx) â€” 256 raw ptrs * 8 bytes
+    # Allocate VM Pointer Registers Array (rbx) -------- 256 raw ptrs * 8 bytes
     mov rbx, rdi
     
-    # Allocate Bytecode Array â€” 512KB for complex programs
+    # Allocate Bytecode Array -------- 512KB for complex programs
     mov rcx, 524288
     call malloc
     mov r12, rax
@@ -1593,8 +1510,38 @@ main:
     mov rcx, 0
     
     lea rax, [rip + token_buf]
-    cmp byte ptr [rax], '#'
-    jne .check_LOAD
+    mov al, byte ptr [rax]
+    cmp al, '#'
+    je .comment_loop
+    cmp al, 'L'
+    je .check_LOAD
+    cmp al, 'A'
+    je .check_ADD
+    cmp al, 'P'
+    je .check_PRINT
+    cmp al, 'J'
+    je .check_JMP
+    cmp al, 'S'
+    je .check_SUB
+    cmp al, 'C'
+    je .check_CALL
+    cmp al, 'R'
+    je .check_RET
+    cmp al, 'D'
+    je .check_DIV
+    cmp al, 'E'
+    je .check_EQ
+    cmp al, 'G'
+    je .check_GT
+    cmp al, 'M'
+    je .check_MUL
+    cmp al, 'N'
+    je .check_NEQ
+    cmp al, 'F'
+    je .check_FOPEN
+    cmp al, 'H'
+    je .check_HALT
+    jmp .print_bad_token
     
 .comment_loop:
     mov rcx, r14
@@ -1609,75 +1556,9 @@ main:
     # check LOAD
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_LOAD]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_ADD
+    jne .check_LT
     
     lea rax, [rip + op_load_const]
     mov [r13], rax
@@ -1706,75 +1587,9 @@ main:
 .check_ADD:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_ADD]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_PRINT
+    jne .check_ALLOC
     
     lea rax, [rip + op_add]
     mov [r13], rax
@@ -1814,75 +1629,9 @@ main:
 .check_PRINT:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_PRINT]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_HALT
+    jne .check_PRINT_C
     
     lea rax, [rip + op_print]
     mov [r13], rax
@@ -1902,75 +1651,9 @@ main:
 .check_HALT:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_HALT]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_LT
+    jne .print_bad_token
     
     lea rax, [rip + op_halt]
     mov [r13], rax
@@ -1980,75 +1663,9 @@ main:
 .check_LT:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_LT]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_EQ
+    jne .check_LABEL
     
     lea rax, [rip + op_lt]
     mov [r13], rax
@@ -2088,75 +1705,9 @@ main:
 .check_EQ:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_EQ]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_LABEL
+    jne .check_EXEC_DYNAMIC
     
     lea rax, [rip + op_eq]
     mov [r13], rax
@@ -2196,75 +1747,9 @@ main:
 .check_LABEL:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_LABEL]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_JMP
+    jne .check_LOAD_STR
     
     mov rcx, r14
     lea rdx, [rip + scan_fmt]
@@ -2280,72 +1765,6 @@ main:
 .check_JMP:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_JMP]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
     jne .check_JMP_F
@@ -2368,75 +1787,9 @@ main:
 .check_JMP_F:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_JMP_F]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_LOAD_STR
+    jne .check_JMP_O
     
     lea rax, [rip + op_jmp_f]
     mov [r13], rax
@@ -2466,82 +1819,16 @@ main:
 .check_LOAD_STR:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_LOAD_STR]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_FOPEN
+    jne .check_LOAD_PTR
     
     # Emit op_load_raw (stores pointer, NOT float)
     lea rax, [rip + op_load_raw]
     mov [r13], rax
     add r13, 8
     
-    # Read the string argument and strdup it â€” store raw pointer
+    # Read the string argument and strdup it -------- store raw pointer
     push rdi
     sub rsp, 40
     mov rcx, r14
@@ -2584,71 +1871,7 @@ main:
 .check_FOPEN:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_FOPEN]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -2682,75 +1905,9 @@ main:
 .check_FGETC:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_FGETC]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_PRINT_C
+    jne .check_FREE
     
     lea rax, [rip + op_fgetc]
     mov [r13], rax
@@ -2780,72 +1937,6 @@ main:
 .check_PRINT_C:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_PRINT_C]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
     jne .check_PRINT_STR
@@ -2868,75 +1959,9 @@ main:
 .check_PRINT_STR:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_PRINT_STR]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_SUB
+    jne .check_PUTS
     
     lea rax, [rip + op_print_str]
     mov [r13], rax
@@ -2953,79 +1978,12 @@ main:
     add r13, 8
     jmp .read_loop
 
-
 .check_SUB:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_SUB]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_MUL
+    jne .check_STORE_PTR
     
     lea rax, [rip + op_sub]
     mov [r13], rax
@@ -3065,75 +2023,9 @@ main:
 .check_MUL:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_MUL]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_DIV
+    jne .check_MOV
     
     lea rax, [rip + op_mul]
     mov [r13], rax
@@ -3173,75 +2065,9 @@ main:
 .check_DIV:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_DIV]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_GT
+    jne .check_DICT_NEW
     
     lea rax, [rip + op_div]
     mov [r13], rax
@@ -3281,75 +2107,9 @@ main:
 .check_GT:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_GT]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_NEQ
+    jne .check_GET_OP
     
     lea rax, [rip + op_gt]
     mov [r13], rax
@@ -3389,75 +2149,9 @@ main:
 .check_NEQ:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_NEQ]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_MOV
+    jne .check_NOT
     
     lea rax, [rip + op_neq]
     mov [r13], rax
@@ -3497,75 +2191,9 @@ main:
 .check_MOV:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_MOV]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_NOT
+    jne .print_bad_token
     
     lea rax, [rip + op_mov]
     mov [r13], rax
@@ -3595,75 +2223,9 @@ main:
 .check_NOT:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_NOT]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_STORE_PTR
+    jne .print_bad_token
     
     lea rax, [rip + op_not]
     mov [r13], rax
@@ -3693,75 +2255,9 @@ main:
 .check_STORE_PTR:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_STORE_PTR]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_LOAD_PTR
+    jne .check_STORE_B
     
     lea rax, [rip + op_store_ptr]
     mov [r13], rax
@@ -3791,75 +2287,9 @@ main:
 .check_LOAD_PTR:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_LOAD_PTR]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_PUTS
+    jne .check_LOAD_B
     
     lea rax, [rip + op_load_ptr]
     mov [r13], rax
@@ -3892,75 +2322,9 @@ main:
 .check_PUTS:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_PUTS]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_ALLOC
+    jne .check_PUSH
     
     # Emit op_puts handler address
     lea rax, [rip + op_puts]
@@ -3973,7 +2337,7 @@ main:
     lea rdx, [rip + scan_fmt]
     lea r8, [rip + val_buf]
     call fscanf
-    # val_buf now has the string â€” embed it directly into bytecode
+    # val_buf now has the string -------- embed it directly into bytecode
     # copy bytes from val_buf into bytecode array r13 using r15 as src ptr
     push r15
     lea r15, [rip + val_buf]
@@ -3993,75 +2357,9 @@ main:
 .check_ALLOC:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_ALLOC]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_DICT_NEW
+    jne .print_bad_token
     
     lea rax, [rip + op_alloc]
     mov [r13], rax
@@ -4091,72 +2389,6 @@ main:
 .check_DICT_NEW:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_DICT_NEW]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
     jne .check_DICT_SET
@@ -4177,72 +2409,6 @@ main:
 .check_DICT_SET:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_DICT_SET]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
     jne .check_DICT_GET
@@ -4281,75 +2447,9 @@ main:
 .check_DICT_GET:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_DICT_GET]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_FREE
+    jne .print_bad_token
     lea rax, [rip + op_dict_get]
     mov [r13], rax
     add r13, 8
@@ -4385,75 +2485,9 @@ main:
 .check_FREE:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_FREE]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_LOAD_B
+    jne .print_bad_token
     
     lea rax, [rip + op_free]
     mov [r13], rax
@@ -4473,75 +2507,9 @@ main:
 .check_LOAD_B:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_LOAD_B]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_STORE_B
+    jne .check_LOAD_F
     
     lea rax, [rip + op_load_b]
     mov [r13], rax
@@ -4581,75 +2549,9 @@ main:
 .check_STORE_B:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_STORE_B]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_EXEC_DYNAMIC
+    jne .check_STORE_I
     
     lea rax, [rip + op_store_b]
     mov [r13], rax
@@ -4689,75 +2591,9 @@ main:
 .check_EXEC_DYNAMIC:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_EXEC_DYNAMIC]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_JMP_O
+    jne .print_bad_token
     lea rax, [rip + op_exec_dynamic]
     mov [r13], rax
     add r13, 8
@@ -4776,71 +2612,7 @@ main:
 .check_JMP_O:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_JMP_O]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -4873,75 +2645,9 @@ main:
 .check_JMP_F_O:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_JMP_F_O]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_STORE_I
+    jne .print_bad_token
     lea rax, [rip + op_jmp_f_o]
     mov [r13], rax
     add r13, 8
@@ -4980,75 +2686,9 @@ main:
 .check_STORE_I:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_STORE_I]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_GET_OP
+    jne .check_STORE_F
     lea rax, [rip + op_store_i]
     mov [r13], rax
     add r13, 8
@@ -5087,75 +2727,9 @@ main:
 .check_GET_OP:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_GET_OP]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_CALL
+    jne .print_bad_token
     
     mov rcx, r14
     lea rdx, [rip + scan_fmt]
@@ -5164,71 +2738,7 @@ main:
 
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_DICT_NEW]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -5239,71 +2749,7 @@ main:
 .check_GET_OP_ADD:
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_ADD]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -5314,71 +2760,7 @@ main:
 .check_GET_OP_DICT_GET:
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_DICT_GET]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -5389,71 +2771,7 @@ main:
 .check_GET_OP_DICT_SET:
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_DICT_SET]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -5464,71 +2782,7 @@ main:
 .check_GET_OP_JMP_F_O:
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_JMP_F_O]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -5539,71 +2793,7 @@ main:
 .check_GET_OP_JMP_O:
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_JMP_O]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -5614,71 +2804,7 @@ main:
 .check_GET_OP_LOAD:
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_LOAD]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -5689,71 +2815,7 @@ main:
 .check_GET_OP_LOAD_RAW:
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_LOAD_RAW]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -5764,71 +2826,7 @@ main:
 .check_GET_OP_POP:
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_POP]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -5839,71 +2837,7 @@ main:
 .check_GET_OP_PRINT:
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_PRINT]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -5914,71 +2848,7 @@ main:
 .check_GET_OP_PUSH:
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_PUSH]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -5989,71 +2859,7 @@ main:
 .check_GET_OP_RET:
     lea rcx, [rip + val_buf]
     lea rdx, [rip + str_RET]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -6329,75 +3135,9 @@ main:
 .check_CALL:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_CALL]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_RET
+    jne .print_bad_token
     
     lea rax, [rip + op_call]
     mov [r13], rax
@@ -6417,75 +3157,9 @@ main:
 .check_RET:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_RET]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_PUSH
+    jne .print_bad_token
     
     lea rax, [rip + op_ret]
     mov [r13], rax
@@ -6495,72 +3169,6 @@ main:
 .check_PUSH:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_PUSH]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
     jne .check_POP
@@ -6583,75 +3191,9 @@ main:
 .check_POP:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_POP]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_LOAD_F
+    jne .check_PUSH_PTR
     
     lea rax, [rip + op_pop]
     mov [r13], rax
@@ -6671,75 +3213,9 @@ main:
 .check_LOAD_F:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_LOAD_F]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_STORE_F
+    jne .check_LOAD_PTR_O
     
     lea rax, [rip + op_load_f]
     mov [r13], rax
@@ -6779,149 +3255,17 @@ main:
 .check_STORE_F:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_STORE_F]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_LOAD_PTR_O
+    jne .check_STORE_PTR_O
     jmp .store_f_match
 
 .check_LOAD_PTR_O:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_LOAD_PTR_O]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_STORE_PTR_O
+    jne .print_bad_token
     lea rax, [rip + op_load_ptr_o]
     mov [r13], rax
     add r13, 8
@@ -6961,75 +3305,9 @@ main:
 .check_STORE_PTR_O:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_STORE_PTR_O]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
-    
     call strcmp
     cmp eax, 0
-    jne .check_PUSH_PTR
+    jne .print_bad_token
     lea rax, [rip + op_store_ptr_o]
     mov [r13], rax
     add r13, 8
@@ -7069,71 +3347,7 @@ main:
 .check_PUSH_PTR:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_PUSH_PTR]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -7158,71 +3372,7 @@ main:
 .check_POP_PTR:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_POP_PTR]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
@@ -7284,71 +3434,7 @@ main:
 .check_PANIC:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_PANIC]
-    # Dump 8 bytes of r11
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rcx]
-    mov rdx, rcx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
-    # Dump 8 bytes of [r13]
-    push rsi
-    push rdi
-    push rbx
-    push rcx
-    push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    sub rsp, 40
-    mov r8, [rdx]
-    mov rdx, rdx
-    lea rcx, [rip + str_hex_fmt]
-    mov eax, 0
-    call printf
-    mov rcx, 0
-    call fflush
-    add rsp, 40
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    pop rdi
-    pop rsi
     
     call strcmp
     cmp eax, 0
