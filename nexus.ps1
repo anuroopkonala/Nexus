@@ -23,18 +23,8 @@ elseif ($Action -eq "run") {
         exit 1
     }
 
-    $bootScript = "src/compiler/compiler_full.nxasm"
-    if (Test-Path $bootScript) {
-        $content = Get-Content -Path $bootScript -Raw
-        $content = $content -replace 'LOAD_STR\s+[^\s]+\s+50', "LOAD_STR $File 50"
-        [IO.File]::WriteAllText($bootScript, $content, [Text.Encoding]::ASCII)
-    } else {
-        Write-Host "Error: $bootScript not found." -ForegroundColor Red
-        exit 1
-    }
-
     Write-Host "Running $File..." -ForegroundColor Cyan
-    .\bin/nexus_core.exe src/compiler/compiler_full.nxasm
+    .\bin\nexus_core.exe $File
 }
 else {
     Write-Host "Usage:"

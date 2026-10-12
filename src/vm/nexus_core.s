@@ -39,11 +39,16 @@ bad_token_fmt: .asciz "BAD_TOKEN: %s\n"
 
 fmt_argc: .asciz "ARGC=%d\n"
 
+vm_debug: .long 0
+cli_source_file: .quad 0
+target_asm_file: .quad 0
+default_compiler: .asciz "src/compiler/compiler_full.nxasm"
+
 file_name: .asciz "tests/vm/boot.nxasm"
 read_mode: .asciz "r"
 scan_fmt: .asciz "%s"
-str_hex_fmt: .asciz "HEX [%p] = %016llX\n"
-err_msg: .asciz "Failed to open tests/vm/boot.nxasm\n"
+str_hex_fmt: .asciz ""
+err_msg: .asciz "Failed to open input file: %s\n"
 
 str_FREAD: .asciz "FREAD"
 str_FWRITE: .asciz "FWRITE"
@@ -154,6 +159,10 @@ next_fmt: .asciz "Executing: %p\n"
     mov rax, [rsi]
     add rsi, 8
     
+    mov edx, [rip + vm_debug]
+    cmp edx, 1
+    jne 1f
+    
     push rsi
     push rdi
     push rbx
@@ -162,17 +171,12 @@ next_fmt: .asciz "Executing: %p\n"
     push rax
     sub rsp, 32
     
-    mov edx, [rip + in_exec]
-    cmp edx, 1
-    jne 1f
-    
     mov rdx, rax
     lea rcx, [rip + next_fmt]
     call printf
     mov rcx, 0
     call fflush
 
-1:
     add rsp, 32
     pop rax
     pop r11
@@ -180,6 +184,8 @@ next_fmt: .asciz "Executing: %p\n"
     pop rbx
     pop rdi
     pop rsi
+
+1:
     jmp rax
 .endm
 
@@ -384,10 +390,10 @@ op_dict_get:
     
     xor eax, eax
 .strcmp_loop_get:
-    # ------------------ PRINT ------------------
-    # 9 pushes = 72 bytes. Wait, rsp enters as 0 mod 16!
-    # 72 = 8 mod 16. To make 0 mod 16, sub 40!
-    # 72 + 40 = 112. 112 % 16 = 0. Aligned!
+    mov eax, [rip + vm_debug]
+    cmp eax, 1
+    jne .skip_dict_debug
+
     push rax
     push rcx
     push rdx
@@ -417,6 +423,7 @@ op_dict_get:
     pop rdx
     pop rcx
     pop rax
+.skip_dict_debug:
     # -------------------------------------------
 
     mov r8b, byte ptr [rcx]
@@ -538,21 +545,23 @@ op_fopen:
     mov rcx, [rbx + r8 * 8]    # arg1: filename ptr
     lea rdx, [rip + read_mode] # arg2: "r"
 
+    mov eax, [rip + vm_debug]
+    cmp eax, 1
+    jne .skip_fopen_debug
     push rcx
     push rdx
     push r8
     push r9
-    
     sub rsp, 32
     mov rdx, rcx
     lea rcx, [rip + str_fmt]
     call printf
     add rsp, 32
-    
     pop r9
     pop r8
     pop rdx
     pop rcx
+.skip_fopen_debug:
     call fopen
     add rsp, 40
     pop rbx
@@ -1056,27 +1065,122 @@ main:
     # Reads .nxasm file from argv[1] or tests/vm/boot.nxasm by default
     # rbp+16 = argc, rbp+24 = argv on Windows x64
     # ---------------------------------------------------------
-    mov rcx, [rip + argc_store]
-    cmp rcx, 1
-    jle .use_default_file
+    # ---------------------------------------------------------
+    # CLI ARGUMENT PARSER
+    # Parses flags (--debug, -d) and file arguments (.nx, .nxasm)
+    # ---------------------------------------------------------
+    mov dword ptr [rip + vm_debug], 0
+    mov qword ptr [rip + cli_source_file], 0
+    mov qword ptr [rip + target_asm_file], 0
+
+    mov ecx, [rip + argc_store]
     mov rdx, [rip + argv_store]
-    mov rcx, [rdx + 8]   # argv[1]
+    mov r8d, 1
+
+.arg_loop:
+    cmp r8d, ecx
+    jge .arg_done
+
+    mov r9, [rdx + r8 * 8]
+    test r9, r9
+    jz .next_arg
+
+    cmp byte ptr [r9], '-'
+    jne .not_flag
+
+    cmp byte ptr [r9 + 1], 'd'
+    je .set_debug_flag
+    cmp byte ptr [r9 + 1], '-'
+    jne .next_arg
+    cmp byte ptr [r9 + 2], 'd'
+    je .set_debug_flag
+    jmp .next_arg
+
+.set_debug_flag:
+    mov dword ptr [rip + vm_debug], 1
+    jmp .next_arg
+
+.not_flag:
+    mov r10, r9
+.strlen_loop:
+    cmp byte ptr [r10], 0
+    je .strlen_done
+    inc r10
+    jmp .strlen_loop
+
+.strlen_done:
+    mov rax, r10
+    sub rax, r9
+
+    cmp rax, 6
+    jb .check_nx
+    cmp byte ptr [r10 - 6], '.'
+    jne .check_nx
+    cmp byte ptr [r10 - 5], 'n'
+    jne .check_nx
+    cmp byte ptr [r10 - 4], 'x'
+    jne .check_nx
+    cmp byte ptr [r10 - 3], 'a'
+    jne .check_nx
+    cmp byte ptr [r10 - 2], 's'
+    jne .check_nx
+    cmp byte ptr [r10 - 1], 'm'
+    jne .check_nx
+    mov [rip + target_asm_file], r9
+    jmp .next_arg
+
+.check_nx:
+    cmp rax, 3
+    jb .check_other
+    cmp byte ptr [r10 - 3], '.'
+    jne .check_other
+    cmp byte ptr [r10 - 2], 'n'
+    jne .check_other
+    cmp byte ptr [r10 - 1], 'x'
+    jne .check_other
+    mov [rip + cli_source_file], r9
+    jmp .next_arg
+
+.check_other:
+    cmp qword ptr [rip + target_asm_file], 0
+    jne .next_arg
+    mov [rip + target_asm_file], r9
+
+.next_arg:
+    inc r8d
+    mov ecx, [rip + argc_store]
+    mov rdx, [rip + argv_store]
+    jmp .arg_loop
+
+.arg_done:
+    mov rcx, [rip + target_asm_file]
+    test rcx, rcx
+    jnz .open_file
+
+    mov rax, [rip + cli_source_file]
+    test rax, rax
+    jz .use_default_boot
+    lea rcx, [rip + default_compiler]
+    mov [rip + target_asm_file], rcx
     jmp .open_file
 
-.use_default_file:
+.use_default_boot:
     lea rcx, [rip + file_name]
+    mov [rip + target_asm_file], rcx
 
 .open_file:
+    mov rcx, [rip + target_asm_file]
     lea rdx, [rip + read_mode]
     call fopen
     cmp rax, 0
     jne .file_opened
     lea rcx, [rip + err_msg]
+    mov rdx, [rip + target_asm_file]
     call printf
     jmp .end
-    
+
 .file_opened:
-    mov r14, rax     # r14 = FILE pointer
+    mov r14, rax
 
 .read_loop:
     mov rcx, r14
@@ -1085,6 +1189,10 @@ main:
     call fscanf
     cmp eax, 1
     jne .parse_done
+
+    mov eax, [rip + vm_debug]
+    cmp eax, 1
+    jne .skip_token_print
     push rdi
     sub rsp, 40
     lea rcx, [rip + str_fmt]
@@ -1094,6 +1202,7 @@ main:
     call fflush
     add rsp, 40
     pop rdi
+.skip_token_print:
     
     mov rcx, 0
     
@@ -2077,6 +2186,13 @@ main:
     movsxd rax, eax
     mov [r13], rax
     add r13, 8
+    cmp eax, 50
+    jne 1f
+    mov rdx, [rip + cli_source_file]
+    test rdx, rdx
+    jz 1f
+    mov [r13 - 16], rdx
+1:
     jmp .read_loop
 
 .check_FOPEN:
@@ -6777,11 +6893,16 @@ main:
     call exit
 
 .parse_done:
+    mov eax, [rip + vm_debug]
+    cmp eax, 1
+    jne 1f
     sub rsp, 32
     lea rcx, [rip + parse_done_msg]
     call printf
     mov rcx, 0
     call fflush
+    add rsp, 32
+1:
     mov rcx, r14
     call fclose
     
@@ -6792,10 +6913,12 @@ main:
     sub rcx, r12
     shr rcx, 3
     mov rdx, rcx
-    add rsp, 32    
     mov dword ptr [rip + in_exec], 1
     mov rsi, r12        # Start of bytecode
     
+    mov eax, [rip + vm_debug]
+    cmp eax, 1
+    jne 2f
     push rsi
     push rdi
     push rbx
@@ -6808,7 +6931,7 @@ main:
     pop rbx
     pop rdi
     pop rsi
-
+2:
     NEXT
 
 vm_exit:
