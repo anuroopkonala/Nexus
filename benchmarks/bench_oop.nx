@@ -1,0 +1,45 @@
+interface ICounter {
+    fn add(n)
+}
+
+class BaseCounter : ICounter {
+public:
+    let val = 0
+    fn add(n) {
+        return n + 1
+    }
+}
+
+class Counter1 : BaseCounter {
+public:
+    fn add(n) {
+        return n + 1
+    }
+}
+
+class Counter2 : BaseCounter {
+public:
+    fn add(n) {
+        return n + 1
+    }
+}
+
+fn get_counter(i) {
+    if (i % 2) == 1 {
+        return Counter1
+    }
+    return Counter2
+}
+
+fn main() {
+    let i = 0
+    let total = 0
+    while i < 5000000 {
+        let c = get_counter(i)
+        total = c.add(total)
+        i += 1
+    }
+    print(total)
+}
+
+main()

@@ -1,25 +1,17 @@
 #include <iostream>
 #include <chrono>
 
-int main(int argc, char** argv) {
-    long long n = 1000000; // 1 Million iterations default
-    if (argc > 1) {
-        n = std::atoll(argv[1]);
+int main() {
+    auto t1 = std::chrono::high_resolution_clock::now();
+    long long sum = 0;
+    long long i = 0;
+    volatile long long n = 50000000;
+    while (i < n) {
+        sum += i;
+        i += 1;
     }
-
-    auto start = std::chrono::high_resolution_clock::now();
-
-    volatile double sum = 0;
-    for (long long i = 0; i < n; ++i) {
-        sum = sum + i;
-    }
-
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::milli> elapsed = end - start;
-
-    std::cout << "C++ " << n << " loop done!\n";
-    std::cout << "Sum: " << (long long)sum << "\n";
-    std::cout << "Loop duration: " << elapsed.count() << " ms\n";
-
+    auto t2 = std::chrono::high_resolution_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
+    std::cout << "Sum: " << sum << ", Time: " << ms << " ms\n";
     return 0;
 }

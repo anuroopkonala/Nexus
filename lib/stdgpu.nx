@@ -1,0 +1,312 @@
+// ==============================================================================
+// Nexus Baremetal - stdgpu Standard GPU Computing & Acceleration Module
+// Direct Hardware CUDA Execution with Zero-Overhead Assembly Interop
+// Complete CUDA Capability: Phases 1, 2, 3, and 4
+// Pure Baremetal x86-64 Architecture - Modular, High Performance, Zero CRT
+// ==============================================================================
+
+// --------------------------------------------------------------------------
+// GPU Device Lifecycle & Status
+// --------------------------------------------------------------------------
+class GPU {
+    fn init() {
+        return gpu_dispatch(0.0, [])
+    }
+
+    fn count() {
+        return gpu_dispatch(1.0, [])
+    }
+
+    fn name() {
+        return gpu_dispatch(2.0, [])
+    }
+
+    fn total_memory() {
+        return gpu_dispatch(3.0, [])
+    }
+
+    fn free_memory() {
+        return gpu_dispatch(4.0, [])
+    }
+
+    fn is_available() {
+        return gpu_dispatch(5.0, [])
+    }
+
+    fn sync() {
+        return gpu_dispatch(6.0, [])
+    }
+
+    fn time_ms() {
+        return gpu_dispatch(30.0, [])
+    }
+}
+
+// --------------------------------------------------------------------------
+// High-Performance Unified & Pinned VRAM Memory Management
+// --------------------------------------------------------------------------
+class GPUMemory {
+    fn info() {
+        return gpu_dispatch(50.0, [])
+    }
+
+    fn alloc(size_bytes) {
+        return gpu_dispatch(7.0, [size_bytes])
+    }
+
+    fn free(handle) {
+        return gpu_dispatch(8.0, [handle])
+    }
+
+    fn alloc_managed(size_bytes) {
+        return gpu_dispatch(51.0, [size_bytes])
+    }
+
+    fn alloc_pinned(size_bytes) {
+        return gpu_dispatch(52.0, [size_bytes])
+    }
+
+    fn prefetch(handle, bytes, stream) {
+        return gpu_dispatch(54.0, [handle, bytes, stream])
+    }
+}
+
+// --------------------------------------------------------------------------
+// High-Speed PCIe DMA Memory Transfers
+// --------------------------------------------------------------------------
+class GPUTransfer {
+    fn copy_to_device(handle, host_array) {
+        return gpu_dispatch(9.0, [handle, host_array])
+    }
+
+    fn copy_to_host(handle) {
+        return gpu_dispatch(10.0, [handle])
+    }
+
+    fn memcpy_d2d(dst_handle, src_handle, bytes) {
+        return gpu_dispatch(11.0, [dst_handle, src_handle, bytes])
+    }
+
+    fn copy_async(dst_handle, src, bytes, stream) {
+        return gpu_dispatch(53.0, [1.0, dst_handle, src, bytes, stream])
+    }
+
+    fn copy_dtoh_async(dst_pinned, src_dev, bytes, stream) {
+        return gpu_dispatch(53.0, [2.0, dst_pinned, src_dev, bytes, stream])
+    }
+
+    fn write_pinned(pinned_handle, host_array) {
+        return gpu_dispatch(58.0, [pinned_handle, host_array])
+    }
+
+    fn read_pinned(pinned_handle, count) {
+        return gpu_dispatch(59.0, [pinned_handle, count])
+    }
+}
+
+// --------------------------------------------------------------------------
+// Object-Oriented CUDA Stream Wrapper
+// --------------------------------------------------------------------------
+class Stream {
+    fn create() {
+        return gpu_dispatch(31.0, [])
+    }
+
+    fn sync(stream) {
+        return gpu_dispatch(32.0, [stream])
+    }
+
+    fn destroy(stream) {
+        return gpu_dispatch(33.0, [stream])
+    }
+
+    fn wait_event(stream, event) {
+        return gpu_dispatch(55.0, [stream, event])
+    }
+
+    fn is_done(stream) {
+        return gpu_dispatch(56.0, [stream])
+    }
+}
+
+// --------------------------------------------------------------------------
+// Object-Oriented Hardware Profiling Event Wrapper
+// --------------------------------------------------------------------------
+class Event {
+    fn create() {
+        return gpu_dispatch(34.0, [])
+    }
+
+    fn record(event, stream) {
+        return gpu_dispatch(35.0, [event, stream])
+    }
+
+    fn elapsed(start_event, end_event) {
+        return gpu_dispatch(36.0, [start_event, end_event])
+    }
+
+    fn destroy(event) {
+        return gpu_dispatch(37.0, [event])
+    }
+
+    fn is_done(event) {
+        return gpu_dispatch(57.0, [event])
+    }
+}
+
+// --------------------------------------------------------------------------
+// Dynamic PTX JIT Kernel Compilation & Launch
+// --------------------------------------------------------------------------
+class Kernel {
+    fn load(ptx_code, kernel_name) {
+        return gpu_dispatch(38.0, [ptx_code, kernel_name])
+    }
+
+    fn launch(kernel_handle, grid, block, smem, stream, args) {
+        return gpu_dispatch(39.0, [kernel_handle, grid, block, smem, stream, args])
+    }
+}
+
+// --------------------------------------------------------------------------
+// High-Level Tensor Computing Abstraction
+// --------------------------------------------------------------------------
+class Tensor {
+    fn create(shape, initial_val) {
+        return gpu_dispatch(12.0, [shape, initial_val])
+    }
+
+    fn from_array(shape, host_array) {
+        let h = gpu_dispatch(12.0, [shape, 0.0])
+        gpu_dispatch(9.0, [h, host_array])
+        return h
+    }
+
+    fn to_array(tensor_handle) {
+        return gpu_dispatch(15.0, [tensor_handle])
+    }
+
+    fn shape(tensor_handle) {
+        return gpu_dispatch(13.0, [tensor_handle])
+    }
+
+    fn reshape(tensor_handle, new_shape) {
+        return gpu_dispatch(14.0, [tensor_handle, new_shape])
+    }
+
+    fn transpose(tensor_handle) {
+        return gpu_dispatch(18.0, [tensor_handle])
+    }
+
+    fn scale(tensor_handle, s) {
+        return gpu_dispatch(23.0, [tensor_handle, s])
+    }
+}
+
+// --------------------------------------------------------------------------
+// Tensor Mathematical & Linear Algebra Operations
+// --------------------------------------------------------------------------
+class MathOps {
+    fn add(tensor_a, tensor_b) {
+        return gpu_dispatch(19.0, [tensor_a, tensor_b])
+    }
+
+    fn sub(tensor_a, tensor_b) {
+        return gpu_dispatch(20.0, [tensor_a, tensor_b])
+    }
+
+    fn mul(tensor_a, tensor_b) {
+        return gpu_dispatch(21.0, [tensor_a, tensor_b])
+    }
+
+    fn div(tensor_a, tensor_b) {
+        return gpu_dispatch(22.0, [tensor_a, tensor_b])
+    }
+
+    fn sum(tensor_handle) {
+        return gpu_dispatch(45.0, [tensor_handle])
+    }
+
+    fn mean(tensor_handle) {
+        return gpu_dispatch(46.0, [tensor_handle])
+    }
+
+    fn matmul(tensor_a, tensor_b) {
+        return gpu_dispatch(17.0, [tensor_a, tensor_b])
+    }
+}
+
+// --------------------------------------------------------------------------
+// Neural Network & Transformer Acceleration Layer
+// --------------------------------------------------------------------------
+class NN {
+    fn relu(tensor_x) {
+        return gpu_dispatch(24.0, [tensor_x])
+    }
+
+    fn sigmoid(tensor_x) {
+        return gpu_dispatch(25.0, [tensor_x])
+    }
+
+    fn gelu(tensor_x) {
+        return gpu_dispatch(40.0, [tensor_x])
+    }
+
+    fn silu(tensor_x) {
+        return gpu_dispatch(41.0, [tensor_x])
+    }
+
+    fn softmax(tensor_x) {
+        return gpu_dispatch(42.0, [tensor_x])
+    }
+
+    fn layernorm(tensor_x, gamma, beta, eps) {
+        return gpu_dispatch(43.0, [tensor_x, gamma, beta, eps])
+    }
+
+    fn rmsnorm(tensor_x, gamma, eps) {
+        return gpu_dispatch(44.0, [tensor_x, gamma, eps])
+    }
+
+    fn conv2d(tensor_x, kernel, stride, pad) {
+        return gpu_dispatch(26.0, [tensor_x, kernel, stride, pad])
+    }
+
+    fn maxpool2d(tensor_x, pool_size, stride) {
+        return gpu_dispatch(27.0, [tensor_x, pool_size, stride])
+    }
+}
+
+// --------------------------------------------------------------------------
+// Computer Vision & Image Processing Acceleration
+// --------------------------------------------------------------------------
+class CV {
+    fn rgb_to_gray(tensor_rgb) {
+        return gpu_dispatch(28.0, [tensor_rgb])
+    }
+
+    fn gaussian_blur(tensor_img) {
+        return gpu_dispatch(47.0, [tensor_img])
+    }
+
+    fn sobel(tensor_img) {
+        return gpu_dispatch(48.0, [tensor_img])
+    }
+
+    fn resize(tensor_img, out_h, out_w) {
+        let sh = gpu_dispatch(13.0, [tensor_img])
+        return gpu_dispatch(49.0, [tensor_img, sh[0], sh[1], out_h, out_w])
+    }
+}
+
+// --------------------------------------------------------------------------
+// Standard Top-Level GPU Facade Alias (stdgpu)
+// --------------------------------------------------------------------------
+class stdgpu {
+    fn init() { return GPU.init() }
+    fn sync() { return GPU.sync() }
+    fn memory_info() { return GPUMemory.info() }
+    fn alloc(size_bytes) { return GPUMemory.alloc(size_bytes) }
+    fn free(handle) { return GPUMemory.free(handle) }
+    fn alloc_managed(size_bytes) { return GPUMemory.alloc_managed(size_bytes) }
+    fn alloc_pinned(size_bytes) { return GPUMemory.alloc_pinned(size_bytes) }
+}

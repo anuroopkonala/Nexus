@@ -1,0 +1,69 @@
+import stdlib
+
+System.print_str("--- Option C: Networking & Sockets ---")
+
+# --- TCP Loopback Tests ---
+System.print_str("--- TCP Loopback ---")
+
+let port = 19876
+let srv = Socket.listen(port)
+if srv >= 0.0 {
+    System.print_str("PASS: Socket.listen")
+} else {
+    System.print_str("FAIL: Socket.listen")
+}
+
+let cli = Socket.connect("127.0.0.1", port)
+if cli >= 0.0 {
+    System.print_str("PASS: Socket.connect")
+} else {
+    System.print_str("FAIL: Socket.connect")
+}
+
+let peer = srv.accept()
+if peer >= 0.0 {
+    System.print_str("PASS: Socket.accept")
+} else {
+    System.print_str("FAIL: Socket.accept")
+}
+
+let sent = cli.send("HELLO_NEXUS_TCP")
+if sent > 0.0 {
+    System.print_str("PASS: Socket.send client->server")
+} else {
+    System.print_str("FAIL: Socket.send client->server")
+}
+
+let recv_data = peer.recv(1024)
+if recv_data == "HELLO_NEXUS_TCP" {
+    System.print_str("PASS: Socket.recv matching message")
+} else {
+    System.print_str("FAIL: Socket.recv matching message")
+}
+
+let sent2 = peer.send("ACK_SERVER_OK")
+let ack = cli.recv(1024)
+if ack == "ACK_SERVER_OK" {
+    System.print_str("PASS: Bidirectional TCP ping-pong")
+} else {
+    System.print_str("FAIL: Bidirectional TCP ping-pong")
+}
+
+cli.close()
+peer.close()
+srv.close()
+System.print_str("PASS: Socket.close")
+
+# --- HTTP GET Test ---
+System.print_str("--- HTTP GET ---")
+let resp = Http.get("http://httpbin.org/get")
+let resp_len = len(resp)
+if resp_len > 10.0 {
+    System.print_str("PASS: Http.get returned non-empty response")
+} else {
+    System.print_str("FAIL: Http.get returned empty response")
+}
+System.print_str("HTTP Response (first 80 chars shown via test):")
+System.print_str(resp)
+
+System.print_str("--- Option C COMPLETE ---")

@@ -46,7 +46,7 @@ let s = test_continue()
 print(s)
 test_arrays()
 
-import "math.nx"
+import math
 
 class Point {
     let x = 0

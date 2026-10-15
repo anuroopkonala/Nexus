@@ -1,0 +1,101 @@
+import stdlib
+
+fn test_match_number(val) {
+    let result = 0
+    match val {
+        1 => {
+            result = 100
+        },
+        2 => {
+            result = 200
+        },
+        _ => {
+            result = 999
+        }
+    }
+    return result
+}
+
+fn test_match_string(s) {
+    let code = -1
+    match s {
+        "apple" => {
+            code = 1
+        },
+        "banana" => {
+            code = 2
+        },
+        _ => {
+            code = 0
+        }
+    }
+    return code
+}
+
+fn test_defer_order() {
+    System.print_str("start defer test")
+    defer {
+        System.print_str("defer 1 (outer)")
+    }
+    defer {
+        System.print_str("defer 2 (inner)")
+    }
+    System.print_str("end defer test")
+}
+
+fn test_defer_early_return(flag) {
+    defer {
+        System.print_str("cleanup executed")
+    }
+    if flag == 1 {
+        System.print_str("returning early")
+        return 42
+    }
+    System.print_str("normal exit")
+    return 10
+}
+
+fn level_three() {
+    System.print_str("level_three throwing")
+    throw "deep error from level 3"
+}
+
+fn level_two() {
+    defer {
+        System.print_str("level_two defer cleanup")
+    }
+    level_three()
+}
+
+fn test_try_catch_unwind() {
+    try {
+        System.print_str("calling level_two")
+        level_two()
+    } catch (err) {
+        System.print_str("caught error:")
+        System.print_str(err)
+    }
+}
+
+fn main() {
+    System.print_str("=== Test 1: Pattern Matching (match) ===")
+    System.print(test_match_number(1))
+    System.print(test_match_number(2))
+    System.print(test_match_number(5))
+
+    System.print(test_match_string("apple"))
+    System.print(test_match_string("banana"))
+    System.print(test_match_string("orange"))
+
+    System.print_str("=== Test 2: Deterministic Cleanup (defer) ===")
+    test_defer_order()
+    let ret = test_defer_early_return(1)
+    System.print(ret)
+
+    System.print_str("=== Test 3: Structured Error Handling (try / catch / throw) ===")
+    test_try_catch_unwind()
+
+    System.print_str("=== ALL STEP 2 TESTS PASSED ===")
+}
+
+main()

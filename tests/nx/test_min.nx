@@ -1,0 +1,17 @@
+import stdlib
+
+fn main() {
+    let ptx_code = ".version 7.1\n.target sm_86\n.address_size 64\n.visible .entry k_double(.param .u64 d_out, .param .u64 d_in, .param .u32 n) {\n.reg .pred %p;\n.reg .b32 %r<5>;\n.reg .b64 %rd<6>;\n.reg .f32 %f<3>;\nmov.u32 %r0, %ctaid.x;\nmov.u32 %r1, %ntid.x;\nmov.u32 %r2, %tid.x;\nmad.lo.u32 %r3, %r0, %r1, %r2;\nld.param.u32 %r4, [n];\nsetp.ge.u32 %p, %r3, %r4;\n@%p bra DONE;\nmul.wide.u32 %rd1, %r3, 4;\nld.param.u64 %rd2, [d_in];\nadd.u64 %rd3, %rd2, %rd1;\nld.global.f32 %f1, [%rd3];\nadd.f32 %f2, %f1, %f1;\nld.param.u64 %rd4, [d_out];\nadd.u64 %rd5, %rd4, %rd1;\nst.global.f32 [%rd5], %f2;\nDONE:\nret;\n}\n"
+    let k = gpu_dispatch(38.0, [ptx_code, "k_double"])
+    print(k)
+
+    let t_in = gpu_dispatch(12.0, [[2, 2], 25.0])
+    let t_out = gpu_dispatch(12.0, [[2, 2], 0.0])
+    let l_ok = gpu_dispatch(39.0, [k, [1, 1, 1], [4, 1, 1], 0.0, 0.0, [t_out, t_in, 4.0]])
+    print(l_ok)
+
+    let out_arr = gpu_dispatch(15.0, [t_out])
+    print(out_arr[0])
+}
+
+main()

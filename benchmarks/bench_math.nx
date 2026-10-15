@@ -1,0 +1,15 @@
+fn main() {
+    let a = 1.00000001
+    let b = 0.00000002
+    let c = 0.5
+    let total = 0.0
+    let i = 0
+    while i < 20000000 {
+        c = (c * a) + b
+        total += c
+        i += 1
+    }
+    print(total)
+}
+
+main()

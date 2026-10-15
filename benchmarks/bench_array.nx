@@ -1,0 +1,25 @@
+import stdlib
+fn main() {
+    let N = 1000000
+    let arr = []
+    let i = 0
+    while i < N {
+        arr = push(arr, 0)
+        i += 1
+    }
+
+    i = 0
+    while i < N {
+        arr[i] = i * 2.5 + 1.0
+        i += 1
+    }
+
+    let total = 0
+    i = 0
+    while i < N {
+        total += arr[i]
+        i += 1
+    }
+    print(total)
+}
+main()

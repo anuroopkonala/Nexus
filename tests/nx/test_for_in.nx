@@ -1,0 +1,41 @@
+import stdlib
+
+fn main() {
+    System.print_str("--- Testing For-In Loops ---")
+    let arr = [10, 20, 30]
+    for x in arr {
+        System.print(x)
+    }
+
+    # Sum test
+    let sum = 0
+    let nums = [1, 2, 3, 4, 5]
+    for n in nums {
+        sum = sum + n
+    }
+    System.print(sum)
+
+    # Continue and Break test
+    System.print_str("--- Break and Continue ---")
+    for val in [100, 200, 300, 400, 500] {
+        if val == 200 {
+            continue
+        }
+        if val == 400 {
+            break
+        }
+        System.print(val)
+    }
+
+    # Nested for-in test
+    System.print_str("--- Nested For-In ---")
+    for a in [10, 20] {
+        for b in [1, 2] {
+            System.print(a + b)
+        }
+    }
+
+    System.print_str("All For-In tests PASS!")
+}
+
+main()

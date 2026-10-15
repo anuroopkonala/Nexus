@@ -1,0 +1,47 @@
+import stdlib
+
+fn main() {
+    System.print_str("--- Testing Array Methods ---")
+    let arr = [10, 20, 30]
+    let l1 = len(arr)
+    System.print(l1)
+
+    // Test push
+    push(arr, 40)
+    let l2 = len(arr)
+    System.print(l2)
+    System.print(arr[3])
+
+    // Test pop
+    let last = pop(arr)
+    System.print(last)
+    let l3 = len(arr)
+    System.print(l3)
+
+    // Test Array instance methods
+    arr.push(99)
+    System.print(arr.len())
+    System.print(arr[3])
+    let p = arr.pop()
+    System.print(p)
+    System.print(arr.len())
+
+    System.print_str("--- Testing String Methods ---")
+    let s = "Hello, Nexus World!"
+    System.print(s.len())
+
+    let sub1 = s.substring(0, 5)
+    System.print_str(sub1)
+
+    let sub2 = s.substring(7, 12)
+    System.print_str(sub2)
+
+    let sub3 = s.substring(13, 18)
+    System.print_str(sub3)
+
+    System.print(sub3.len())
+
+    System.print_str("All Array and String methods PASS!")
+}
+
+main()

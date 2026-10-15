@@ -1,0 +1,10 @@
+import stdlib
+
+fn main() {
+    let r = gpu_dispatch(0.0, [])
+    System.print_str(" gpu_dispatch init result: \ + to_string(r))
+ let s = gpu_dispatch(31.0, [])
+ System.print_str(\gpu_dispatch stream_create result: \ + to_string(s))
+}
+
+main()

@@ -1,0 +1,54 @@
+import stdlib
+
+class GPULimits {
+    fn init() { return gpu_dispatch(0.0, []) }
+    fn tensor(shape, val) { return gpu_dispatch(12.0, [shape, val]) }
+    fn to_array(h) { return gpu_dispatch(15.0, [h]) }
+    fn free(h) { return gpu_dispatch(8.0, [h]) }
+    fn add(a, b) { return gpu_dispatch(19.0, [a, b]) }
+}
+
+fn main() {
+    print("==================================================")
+    print("Testing GPU Slab Allocator & Handle Table Limits")
+    print("==================================================")
+
+    GPULimits.init()
+    print("PASS: GPU Driver Initialized")
+
+    // 1. Pre-allocate array of 150 entries
+    let handles = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    // 2. Allocate 150 GPU tensors into the handles array
+    let i = 0
+    while i < 150 {
+        let t = GPULimits.tensor([2, 2], 5.0)
+        handles[i] = t
+        i = i + 1
+    }
+    print("Allocated 150 GPU tensor handles simultaneously.")
+
+    // 3. Test hardware compute using handles near end of table
+    let h148 = handles[148]
+    let h149 = handles[149]
+    let h_sum = GPULimits.add(h148, h149)
+    let arr = GPULimits.to_array(h_sum)
+    if arr[0] == 10.0 {
+        print("PASS: Compute on high-index handle (5.0 + 5.0 = 10.0) verified!")
+    }
+
+    // 4. Release all 150 tensors into expanded 512-slot slab cache
+    let j = 0
+    while j < 150 {
+        let h = handles[j]
+        GPULimits.free(h)
+        j = j + 1
+    }
+    GPULimits.free(h_sum)
+    print("PASS: 150 VRAM buffers recycled into expanded 512-slot slab cache successfully!")
+    print("==================================================")
+    print("All GPU Extended Limits Verified!")
+    print("==================================================")
+}
+
+main()

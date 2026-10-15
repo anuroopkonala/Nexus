@@ -1,0 +1,30 @@
+import stdlib
+
+fn main() {
+    let port = 28999
+    let srv = Socket.listen(port)
+    let cli = Socket.connect("127.0.0.1", port)
+    let peer = srv.accept()
+
+    let req_msg = "PING_REQ_DATA_9876543210"
+    let ack_msg = "PONG_ACK_DATA_9876543210"
+
+    let i = 0
+    let total_bytes = 0
+    while i < 10000 {
+        cli.send(req_msg)
+        let req = peer.recv(64)
+        peer.send(ack_msg)
+        let ack = cli.recv(64)
+        total_bytes += req.len() + ack.len()
+        i += 1
+    }
+
+    cli.close()
+    peer.close()
+    srv.close()
+
+    print(total_bytes)
+}
+
+main()

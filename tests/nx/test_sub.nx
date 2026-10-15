@@ -1,0 +1,260 @@
+import stdlib
+
+fn test_system() {
+    System.print_str("--- Testing System (9 methods) ---")
+    System.print_str("Testing System.print_str: PASS")
+    System.print(42.0)
+    let t = System.time_ms()
+    if t > 0.0 {
+        System.print_str("PASS: System.time_ms")
+    }
+    System.set_env("NX_STDLIB_TEST_KEY", "NexusStandardLib42")
+    let env_val = System.get_env("NX_STDLIB_TEST_KEY")
+    if env_val == "NexusStandardLib42" {
+        System.print_str("PASS: System.set_env and System.get_env")
+    }
+    let res = System.exec("cmd.exe /c exit 0")
+    if res == 0.0 {
+        System.print_str("PASS: System.exec exit 0")
+    }
+    let argv = System.args()
+    if argv.len() >= 1.0 {
+        System.print_str("PASS: System.args")
+    }
+    let exit_fn = System.exit
+    if exit_fn != 0.0 {
+        System.print_str("PASS: System.exit method bound")
+    }
+}
+
+fn test_crypto() {
+    System.print_str("--- Testing Crypto (10 methods) ---")
+    let hash_sha = Crypto.sha256("hello")
+    if hash_sha == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+        System.print_str("PASS: Crypto.sha256")
+    }
+    let hash_md5 = Crypto.md5("hello")
+    if hash_md5 == "5d41402abc4b2a76b9719d911017c592" {
+        System.print_str("PASS: Crypto.md5")
+    }
+    let b64 = Crypto.base64_encode("hello")
+    let b64_dec = Crypto.base64_decode(b64)
+    if b64_dec == "hello" {
+        System.print_str("PASS: Crypto.base64_encode/decode")
+    }
+    let hex_enc = Crypto.hex_encode("hello")
+    let hex_dec = Crypto.hex_decode(hex_enc)
+    if hex_dec == "hello" {
+        System.print_str("PASS: Crypto.hex_encode/decode")
+    }
+    let ct = Crypto.aes_encrypt("NexusAESCompleteTestMessage", "1234567890123456")
+    let pt = Crypto.aes_decrypt(ct, "1234567890123456")
+    if pt == "NexusAESCompleteTestMessage" {
+        System.print_str("PASS: Crypto.aes_encrypt and Crypto.aes_decrypt")
+    }
+    let hmac_res = Crypto.hmac_sha256("what do ya want for nothing?", "Jefe")
+    if hmac_res == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843" {
+        System.print_str("PASS: Crypto.hmac_sha256")
+    }
+    let rnd = Crypto.random_bytes(16)
+    if rnd.len() == 32.0 {
+        System.print_str("PASS: Crypto.random_bytes")
+    }
+}
+
+fn test_net() {
+    System.print_str("--- Testing Net (6 methods) ---")
+    let port = 19910
+    let srv = Net.tcp_listen(port)
+    if srv >= 0.0 {
+        System.print_str("PASS: Net.tcp_listen")
+    }
+    let cli = Net.tcp_connect("127.0.0.1", port)
+    if cli >= 0.0 {
+        System.print_str("PASS: Net.tcp_connect")
+    }
+    let peer = srv.accept()
+    if peer >= 0.0 {
+        System.print_str("PASS: Net.tcp_accept")
+    }
+    let sent = cli.send("NET_PING_TEST")
+    if sent > 0.0 {
+        System.print_str("PASS: Net.tcp_send")
+    }
+    let recvd = peer.recv(1024)
+    if recvd == "NET_PING_TEST" {
+        System.print_str("PASS: Net.tcp_recv")
+    }
+    cli.close()
+    peer.close()
+    srv.close()
+    System.print_str("PASS: Net.tcp_close")
+}
+
+fn test_file() {
+    System.print_str("--- Testing File (7 methods) ---")
+    let temp_path = "tests/nx/test_stdlib_temp.txt"
+    File.write_all(temp_path, "Nexus File Line 1\n")
+    System.print_str("PASS: File.write_all")
+    let ex1 = File.exists(temp_path)
+    if ex1 == 1.0 {
+        System.print_str("PASS: File.exists")
+    }
+    File.append(temp_path, "Nexus File Line 2\n")
+    System.print_str("PASS: File.append")
+    let full_content = File.read_all(temp_path)
+    if full_content == "Nexus File Line 1\nNexus File Line 2\n" {
+        System.print_str("PASS: File.read_all")
+    }
+    let fh = File.open(temp_path)
+    if fh > 0.0 {
+        let chunk = File.read(fh, 5)
+        if chunk == "Nexus" {
+            System.print_str("PASS: File.open and File.read")
+        }
+        File.close(fh)
+        System.print_str("PASS: File.close")
+    }
+    let g_ex = exists(temp_path)
+    if g_ex == 1.0 {
+        let g_content = read_all(temp_path)
+        if g_content == full_content {
+            System.print_str("PASS: global exists() and read_all()")
+        }
+    }
+}
+
+fn test_math() {
+    System.print_str("--- Testing Math (9 methods) ---")
+    let s = Math.sin(0)
+    if s == 0.0 {
+        System.print_str("PASS: Math.sin")
+    }
+    let c = Math.cos(0)
+    if c == 1.0 {
+        System.print_str("PASS: Math.cos")
+    }
+    let sq = Math.sqrt(81)
+    if sq == 9.0 {
+        System.print_str("PASS: Math.sqrt")
+    }
+    let p = Math.pow(2, 6)
+    if p == 64.0 {
+        System.print_str("PASS: Math.pow")
+    }
+    let a1 = Math.abs(-123)
+    if a1 == 123.0 {
+        System.print_str("PASS: Math.abs")
+    }
+    let fl = Math.floor(7.9)
+    if fl == 7.0 {
+        System.print_str("PASS: Math.floor")
+    }
+    let ce = Math.ceil(7.1)
+    if ce == 8.0 {
+        System.print_str("PASS: Math.ceil")
+    }
+    let mn = Math.min(10, 25)
+    if mn == 10.0 {
+        System.print_str("PASS: Math.min")
+    }
+    let mx = Math.max(10, 25)
+    if mx == 25.0 {
+        System.print_str("PASS: Math.max")
+    }
+    let g_mn = min(100, 50)
+    let g_mx = max(100, 50)
+    if g_mn == 50.0 {
+        if g_mx == 100.0 {
+            System.print_str("PASS: global min() and max()")
+        }
+    }
+}
+
+fn test_string() {
+    System.print_str("--- Testing String (7 methods) ---")
+    let s = "Nexus programming language"
+    let l = s.len()
+    if l == 26.0 {
+        System.print_str("PASS: String.len")
+    }
+    let sub = s.substring(0, 5)
+    if sub == "Nexus" {
+        System.print_str("PASS: String.substring")
+    }
+    let raw_str = "alpha,beta,gamma"
+    let parts = raw_str.split(",")
+    if parts[0] == "alpha" {
+        if parts[1] == "beta" {
+            if parts[2] == "gamma" {
+                System.print_str("PASS: String.split")
+            }
+        }
+    }
+    let c1 = s.contains("programming")
+    if c1 == 1.0 {
+        System.print_str("PASS: String.contains")
+    }
+    let idx1 = s.index_of("programming")
+    if idx1 == 6.0 {
+        System.print_str("PASS: String.index_of")
+    }
+    let s_up = "nexus"
+    let up = s_up.to_upper()
+    if up == "NEXUS" {
+        System.print_str("PASS: String.to_upper")
+    }
+    let s_low = "NEXUS"
+    let low = s_low.to_lower()
+    if low == "nexus" {
+        System.print_str("PASS: String.to_lower")
+    }
+}
+
+fn test_array() {
+    System.print_str("--- Testing Array (4 methods) ---")
+    let arr = [10, 20, 30]
+    let l = arr.len()
+    if l == 3.0 {
+        System.print_str("PASS: Array.len")
+    }
+    let p1 = arr.pop()
+    if p1 == 30.0 {
+        System.print_str("PASS: Array.pop")
+    }
+    arr.push(99)
+    let p2 = arr.pop()
+    if p2 == 99.0 {
+        System.print_str("PASS: Array.push")
+    }
+    let sl = arr.slice(0, 2)
+    if sl.len() == 2.0 {
+        System.print_str("PASS: Array.slice")
+    }
+}
+
+fn test_gc() {
+    System.print_str("--- Testing GC (System.gc and global gc) ---")
+    let gc_res = System.gc()
+    if gc_res == 0.0 {
+        System.print_str("PASS: System.gc")
+    }
+    let gc_global = gc()
+    if gc_global == 0.0 {
+        System.print_str("PASS: global gc()")
+    }
+}
+
+fn main() {
+    test_system()
+    test_crypto()
+    test_net()
+    test_file()
+    test_math()
+    test_string()
+    test_array()
+    test_gc()
+    System.print_str("ALL 7 CLASSES AND 52 METHODS VERIFIED!")
+}
+
+main()

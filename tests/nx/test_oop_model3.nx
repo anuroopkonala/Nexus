@@ -1,0 +1,99 @@
+# Model 3 OOP Comprehensive Test Suite
+# Tests:
+# 1. Single Inheritance (Animal -> Dog) with method overriding & method inheriting
+# 2. Multiple Interfaces (IAudible, IPrintable)
+# 3. Access specifiers (public:, private:, protected:)
+# 4. Member assignment (obj.member = expr)
+# 5. User-defined class print hook (custom print() and custom to_str())
+
+# --- 1. Interfaces ---
+interface IAudible {
+    fn speak()
+}
+
+interface IPrintable {
+    fn to_str()
+}
+
+# --- 2. Base Class ---
+class Animal {
+public:
+    let species = "Generic Animal"
+
+    fn speak() {
+        return "animal sound"
+    }
+
+    fn describe() {
+        return "Kind: Animal"
+    }
+}
+
+# --- 3. Derived Class inheriting from Animal and implementing IAudible, IPrintable ---
+class Dog : Animal, IAudible, IPrintable {
+public:
+    let breed = "Golden Retriever"
+
+    # Overriding speak()
+    fn speak() {
+        return "woof"
+    }
+
+    # Custom to_str() hook for print()
+    fn to_str() {
+        return "Dog: Golden Retriever"
+    }
+}
+
+# --- 4. Class with custom print() hook ---
+class Widget {
+public:
+    fn print() {
+        print("Widget[ID=42, Active=true]")
+    }
+}
+
+# --- 5. Class with access specifiers ---
+class Account {
+private:
+    let pin = 9876
+public:
+    let balance = 500
+}
+
+# Verify Inheritance & Overriding
+let a = Animal
+print(a.speak())
+print(a.describe())
+
+let d = Dog
+print(d.speak())
+print(d.describe())
+
+# Verify Custom to_str() Hook on print(d)
+print(d)
+
+# Verify Custom print() Hook on print(w)
+let w = Widget
+print(w)
+
+# Verify Member Assignment
+class Point {
+public:
+    let x = 10
+    let y = 20
+}
+
+let p = Point
+print(p.x)
+print(p.y)
+p.x = 100
+p.y = 200
+print(p.x)
+print(p.y)
+
+# Verify Access Specifier (public is exported, private is encapsulated)
+let acc = Account
+print(acc.balance)
+
+print("PASS: Model 3 OOP Verified")

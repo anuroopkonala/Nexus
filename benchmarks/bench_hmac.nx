@@ -1,0 +1,16 @@
+import stdlib
+
+fn main() {
+    let key = "SecretKeyNexusBaremetal2026"
+    let msg = "TheQuickBrownFoxJumpsOverTheLazyDogAndRunsFast"
+    let i = 0
+    let total_len = 0
+    while i < 25000 {
+        let mac = Crypto.hmac_sha256(msg, key)
+        total_len += len(mac)
+        i += 1
+    }
+    print(total_len)
+}
+
+main()

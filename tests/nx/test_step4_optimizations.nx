@@ -1,0 +1,86 @@
+import stdlib
+
+class Item {
+    let price = 25
+    let tag = 99
+    fn get_price() {
+        return 25
+    }
+}
+
+fn test_var_loop_acc() {
+    let n = 100000
+    let sum = 0
+    let i = 0
+    while i < n {
+        sum += i
+        i += 1
+    }
+    // sum of 0..99999 is 99999 * 100000 / 2 = 4999950000
+    System.print(sum)
+    System.print(i)
+}
+
+fn test_var_loop_counter() {
+    let n = 50000
+    let i = 0
+    while i < n {
+        i += 1
+    }
+    System.print(i)
+}
+
+fn test_inline_caching() {
+    let it = Item
+    let i = 0
+    let total = 0
+    while i < 10000 {
+        total += it.price
+        i += 1
+    }
+    System.print(total)
+
+    let d = { "alpha": 7, "beta": 14 }
+    let k = 0
+    let count = 0
+    while k < 5000 {
+        if d.has_key("alpha") {
+            count += d.alpha
+        }
+        k += 1
+    }
+    System.print(count)
+}
+
+fn test_simd_block_transfers() {
+    // Array slicing of different sizes to verify SIMD block move
+    let big_arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    let s_odd = big_arr.slice(2, 19)
+    System.print(len(s_odd))
+    System.print(s_odd[0])
+    System.print(s_odd[16])
+
+    // String concat SIMD block move
+    let s1 = "This is a long string that exceeds sixteen bytes for testing SSE SIMD."
+    let s2 = " And this is a second string that also exceeds sixteen bytes block."
+    let combined = s1 + s2
+    System.print(len(combined))
+}
+
+fn main() {
+    System.print_str("=== Test 1: Variable-Limit Loop Accumulator ===")
+    test_var_loop_acc()
+
+    System.print_str("=== Test 2: Variable-Limit Loop Counter ===")
+    test_var_loop_counter()
+
+    System.print_str("=== Test 3: Inline Caching in Object Member Access ===")
+    test_inline_caching()
+
+    System.print_str("=== Test 4: SIMD Block Transfers ===")
+    test_simd_block_transfers()
+
+    System.print_str("=== ALL STEP 4 TESTS PASSED ===")
+}
+
+main()

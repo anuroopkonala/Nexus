@@ -1,0 +1,94 @@
+// ============================================================================
+// Nexus Baremetal - Pure Native GPU Acceleration Library (gpu.nx)
+// Built 100% from scratch in pure assembly & pure Nexus
+// Direct Hardware Compute on NVIDIA CUDA Cores with Zero Dependencies
+// ============================================================================
+
+class GPU {
+    // --- Device Information & Initialization ---
+    fn init() {
+        return gpu_dispatch(0.0, [])
+    }
+
+    fn count() {
+        return gpu_dispatch(1.0, [])
+    }
+
+    fn name() {
+        return gpu_dispatch(2.0, [])
+    }
+
+    fn total_memory() {
+        return gpu_dispatch(3.0, [])
+    }
+
+    fn free_memory() {
+        return gpu_dispatch(4.0, [])
+    }
+
+    fn is_available() {
+        return gpu_dispatch(5.0, [])
+    }
+
+    fn sync() {
+        return gpu_dispatch(6.0, [])
+    }
+
+    // --- Direct Memory & Buffer Allocation (Safe Handles) ---
+    fn alloc(size_bytes) {
+        return gpu_dispatch(7.0, [size_bytes])
+    }
+
+    fn free(handle) {
+        return gpu_dispatch(8.0, [handle])
+    }
+
+    fn copy_to_device(handle, host_array) {
+        return gpu_dispatch(9.0, [handle, host_array])
+    }
+
+    fn copy_to_host(handle) {
+        return gpu_dispatch(10.0, [handle])
+    }
+
+    // --- High-Level Tensor Computing (AI/ML & Deep Learning) ---
+    fn tensor(shape, initial_val) {
+        return gpu_dispatch(12.0, [shape, initial_val])
+    }
+
+    fn to_array(tensor_handle) {
+        return gpu_dispatch(15.0, [tensor_handle])
+    }
+
+    // Tiled Matrix Multiplication on GPU Hardware Cores (C = A * B)
+    fn matmul(tensor_a, tensor_b) {
+        return gpu_dispatch(17.0, [tensor_a, tensor_b])
+    }
+
+    // High-Throughput Element-Wise Vectorized Operations
+    fn add(tensor_a, tensor_b) {
+        return gpu_dispatch(19.0, [tensor_a, tensor_b])
+    }
+
+    fn sub(tensor_a, tensor_b) {
+        return gpu_dispatch(20.0, [tensor_a, tensor_b])
+    }
+
+    fn mul(tensor_a, tensor_b) {
+        return gpu_dispatch(21.0, [tensor_a, tensor_b])
+    }
+
+    fn div(tensor_a, tensor_b) {
+        return gpu_dispatch(22.0, [tensor_a, tensor_b])
+    }
+
+    // Neural Network Activations
+    fn relu(tensor_a) {
+        return gpu_dispatch(24.0, [tensor_a])
+    }
+
+    // Benchmarking & Hardware High-Resolution Timer
+    fn time_ms() {
+        return gpu_dispatch(30.0, [])
+    }
+}

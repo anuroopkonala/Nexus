@@ -1,0 +1,31 @@
+let x = 10
+x += 5
+if x == 15 {
+    print(10)
+} else {
+    print(0)
+}
+
+x -= 3
+if x == 12 {
+    print(11)
+} else {
+    print(0)
+}
+
+x *= 2
+if x == 24 {
+    print(12)
+} else {
+    print(0)
+}
+
+x /= 4
+if x == 6 {
+    print(13)
+} else {
+    print(0)
+}
+
+let sum = 0
+print(sum)

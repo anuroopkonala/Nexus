@@ -1,0 +1,24 @@
+import stdlib
+
+fn recurse_deep(n, max_depth) {
+    if n >= max_depth {
+        return n
+    }
+    return recurse_deep(n + 1, max_depth)
+}
+
+fn main() {
+    print("==================================================")
+    print("Testing Deep Recursion (Python default limit: 1,000)")
+    print("==================================================")
+    
+    // Test recursion to depth 25,000 (25x Python limit!)
+    let depth = recurse_deep(0, 25000)
+    if depth == 25000 {
+        print("PASS: Recursion depth 25,000 verified cleanly without stack overflow!")
+    } else {
+        print("FAIL: Expected 25000, got: " + to_string(depth))
+    }
+}
+
+main()

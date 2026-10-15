@@ -1,4 +1,4 @@
-import "stdlib.nx"
+import stdlib
 
 fn main() {
     System.print_str("--- Testing Modulo Operator ---")

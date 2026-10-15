@@ -1,0 +1,6 @@
+class Math2 {
+    fn get_pi() {
+        return 3.14
+    }
+}
+print(Math2.get_pi())

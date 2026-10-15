@@ -1,0 +1,9 @@
+import stdlib
+
+fn main() {
+    let x = 100.0
+    let y = x / 0.0
+    System.print_str("y = " + to_string(y))
+}
+
+main()

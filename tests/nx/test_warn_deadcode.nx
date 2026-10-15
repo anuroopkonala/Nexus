@@ -1,0 +1,13 @@
+import stdlib
+
+fn calculate(x) {
+    return x * 2.0
+    let unreachable_val = 99.0
+}
+
+fn main() {
+    let r = calculate(10.0)
+    System.print_str("result = " + to_string(r))
+}
+
+main()

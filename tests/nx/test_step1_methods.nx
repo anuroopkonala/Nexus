@@ -1,0 +1,72 @@
+import stdlib
+
+fn main() {
+    System.print_str("=== Test 1: Array Slicing & Methods ===")
+    let arr = [10, 20, 30, 40, 50]
+    
+    // Test arr.slice(1, 4)
+    let s1 = arr.slice(1, 4)
+    System.print(len(s1))
+    System.print(s1[0])
+    System.print(s1[1])
+    System.print(s1[2])
+
+    // Test arr.slice(0, 2)
+    let s2 = arr.slice(0, 2)
+    System.print(len(s2))
+    System.print(s2[0])
+    System.print(s2[1])
+
+    // Test arr.push and arr.pop and arr.len
+    arr.push(60)
+    System.print(arr.len())
+    let popped = arr.pop()
+    System.print(popped)
+    System.print(arr.len())
+
+    System.print_str("=== Test 2: String Split (a.split(' ')) ===")
+    let a = "hello world nexus baremetal"
+    let parts = a.split(" ")
+    System.print(len(parts))
+    System.print_str(parts[0])
+    System.print_str(parts[1])
+    System.print_str(parts[2])
+    System.print_str(parts[3])
+
+    System.print_str("=== Test 3: String Contains & IndexOf ===")
+    let hay = "The quick brown fox jumps over the lazy dog"
+    let c1 = hay.contains("fox")
+    System.print(c1)
+    let c2 = hay.contains("cat")
+    System.print(c2)
+
+    let idx1 = hay.index_of("brown")
+    System.print(idx1)
+    let idx2 = hay.index_of("cat")
+    System.print(idx2)
+
+    System.print_str("=== Test 4: String ToUpper & ToLower ===")
+    let orig = "Hello, Nexus Baremetal!"
+    let up = orig.to_upper()
+    System.print_str(up)
+    let lo = orig.to_lower()
+    System.print_str(lo)
+
+    System.print_str("=== Test 5: Dictionary Introspection ===")
+    let d = { "name": "Nexus", "speed": 1.2 }
+    
+    let hk1 = d.has_key("name")
+    System.print(hk1)
+    let hk2 = d.has_key("missing")
+    System.print(hk2)
+
+    let ks = d.keys()
+    System.print(len(ks))
+    
+    let vs = d.values()
+    System.print(len(vs))
+
+    System.print_str("=== ALL STEP 1 TESTS PASSED ===")
+}
+
+main()

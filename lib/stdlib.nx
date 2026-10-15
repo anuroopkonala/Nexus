@@ -1,53 +1,435 @@
+// ============================================================================
+// Nexus Standard Library (stdlib.nx)
+// Production-Ready Standard Library for Nexus Baremetal
+// ============================================================================
+
 class System {
     fn print(val) {
-        __asm__(1, val)
+        print(val)
     }
-    
+
     fn print_str(val) {
-        __asm__(6, val)
+        print_str(val)
     }
 
     fn exit(code) {
-        __asm__(7, code)
+        exit(code)
+    }
+
+    fn time_ms() {
+        return time_ms()
+    }
+
+    fn get_env(key) {
+        return get_env(key)
+    }
+
+    fn set_env(key, val) {
+        return set_env(key, val)
+    }
+
+    fn exec(cmd) {
+        return exec(cmd)
+    }
+
+    fn args() {
+        return args()
+    }
+
+    fn gc() {
+        return gc()
+    }
+}
+
+class Crypto {
+    fn sha256(data) {
+        return sha256(data)
+    }
+
+    fn md5(data) {
+        return md5(data)
+    }
+
+    fn base64_encode(data) {
+        return base64_encode(data)
+    }
+
+    fn base64_decode(data) {
+        return base64_decode(data)
+    }
+
+    fn hex_encode(data) {
+        return hex_encode(data)
+    }
+
+    fn hex_decode(data) {
+        return hex_decode(data)
+    }
+
+    fn aes_encrypt(data, key) {
+        return aes_encrypt(data, key)
+    }
+
+    fn aes_decrypt(data, key) {
+        return aes_decrypt(data, key)
+    }
+
+    fn hmac_sha256(data, key) {
+        return hmac_sha256(data, key)
+    }
+
+    fn random_bytes(len) {
+        return random_bytes(len)
+    }
+}
+
+class Net {
+    fn tcp_connect(host, port) {
+        return tcp_connect(host, port)
+    }
+
+    fn tcp_listen(port) {
+        return tcp_listen(port)
+    }
+
+    fn tcp_accept(sock) {
+        return tcp_accept(sock)
+    }
+
+    fn tcp_send(sock, data) {
+        return tcp_send(sock, data)
+    }
+
+    fn tcp_recv(sock, max_len) {
+        return tcp_recv(sock, max_len)
+    }
+
+    fn tcp_close(sock) {
+        return tcp_close(sock)
+    }
+
+    fn connect(host, port) {
+        return tcp_connect(host, port)
+    }
+
+    fn listen(port) {
+        return tcp_listen(port)
+    }
+
+    fn accept(sock) {
+        return tcp_accept(sock)
+    }
+
+    fn send(sock, data) {
+        return tcp_send(sock, data)
+    }
+
+    fn recv(sock, max_len) {
+        return tcp_recv(sock, max_len)
+    }
+
+    fn close(sock) {
+        return tcp_close(sock)
     }
 }
 
 class File {
     fn open(path) {
-        return __asm__(2, path)
+        return fopen(path)
     }
 
-    fn read(file) {
-        return __asm__(3, file)
+    fn read(file, len) {
+        return fread(file, len)
+    }
+
+    fn read_all(path) {
+        return read_all(path)
+    }
+
+    fn write_all(path, data) {
+        return write_all(path, data)
+    }
+
+    fn append(path, data) {
+        return append(path, data)
+    }
+
+    fn exists(path) {
+        return exists(path)
+    }
+
+    fn read_text(path) {
+        return read_all(path)
+    }
+
+    fn write_text(path, data) {
+        return write_all(path, data)
+    }
+
+    fn close(file) {
+        return fclose(file)
     }
 }
 
 class Math {
     fn sin(x) {
-        return __asm__(4, x)
+        return sin(x)
     }
 
     fn cos(x) {
-        return __asm__(8, x)
+        return cos(x)
     }
-    
+
     fn sqrt(x) {
-        return __asm__(5, x)
+        return sqrt(x)
     }
 
     fn pow(x, y) {
-        return __asm__(9, x, y)
+        return pow(x, y)
     }
 
     fn abs(x) {
-        return __asm__(10, x)
+        return abs(x)
     }
 
     fn floor(x) {
-        return __asm__(11, x)
+        return floor(x)
     }
 
     fn ceil(x) {
-        return __asm__(12, x)
+        return ceil(x)
+    }
+
+    fn min(a, b) {
+        return min(a, b)
+    }
+
+    fn max(a, b) {
+        return max(a, b)
+    }
+}
+
+class String {
+    fn len(str) {
+        return len(str)
+    }
+
+    fn substring(str, start, len) {
+        return substring(str, start, len)
+    }
+
+    fn split(str, delim) {
+        return split(str, delim)
+    }
+
+    fn contains(str, substr) {
+        return contains(str, substr)
+    }
+
+    fn index_of(str, substr) {
+        return index_of(str, substr)
+    }
+
+    fn to_upper(str) {
+        return to_upper(str)
+    }
+
+    fn to_lower(str) {
+        return to_lower(str)
+    }
+
+    fn upper(str) {
+        return to_upper(str)
+    }
+
+    fn lower(str) {
+        return to_lower(str)
+    }
+
+    fn starts_with(str, prefix) {
+        let plen = len(prefix)
+        let slen = len(str)
+        if plen > slen { return 0 }
+        let sub = substring(str, 0, plen)
+        if sub == prefix { return 1 }
+        return 0
+    }
+
+    fn ends_with(str, suffix) {
+        let sfxlen = len(suffix)
+        let slen = len(str)
+        if sfxlen > slen { return 0 }
+        let start = slen - sfxlen
+        let sub = substring(str, start, sfxlen)
+        if sub == suffix { return 1 }
+        return 0
+    }
+
+    fn trim(str) {
+        let n = len(str)
+        if n == 0 { return "" }
+        let start = 0
+        while start < n {
+            let ch = substring(str, start, 1)
+            if ch != " " && ch != "\t" && ch != "\r" && ch != "\n" {
+                break
+            }
+            start += 1
+        }
+        if start >= n { return "" }
+        let end = n - 1
+        while end >= start {
+            let ch = substring(str, end, 1)
+            if ch != " " && ch != "\t" && ch != "\r" && ch != "\n" {
+                break
+            }
+            end -= 1
+        }
+        return substring(str, start, end - start + 1)
+    }
+
+    fn replace(str, target, replacement) {
+        let parts = split(str, target)
+        let n = len(parts)
+        if n == 0 { return "" }
+        let res = parts[0]
+        let i = 1
+        while i < n {
+            res = res + replacement + parts[i]
+            i += 1
+        }
+        return res
+    }
+}
+
+class Array {
+    fn len(arr) {
+        return len(arr)
+    }
+
+    fn push(arr, item) {
+        return push(arr, item)
+    }
+
+    fn pop(arr) {
+        return pop(arr)
+    }
+
+    fn slice(arr, start, end) {
+        return slice(arr, start, end)
+    }
+
+    fn reverse(arr) {
+        let res = []
+        let n = len(arr)
+        let i = n - 1
+        while i >= 0 {
+            push(res, arr[i])
+            i -= 1
+        }
+        return res
+    }
+
+    fn join(arr, delim) {
+        let n = len(arr)
+        if n == 0 { return "" }
+        let res = "" + arr[0]
+        let i = 1
+        while i < n {
+            res = res + delim + arr[i]
+            i += 1
+        }
+        return res
+    }
+}
+
+fn upper(str) { return to_upper(str) }
+fn lower(str) { return to_lower(str) }
+fn starts_with(str, prefix) { return String.starts_with(str, prefix) }
+fn ends_with(str, suffix) { return String.ends_with(str, suffix) }
+fn trim(str) { return String.trim(str) }
+fn replace(str, target, replacement) { return String.replace(str, target, replacement) }
+fn reverse(arr) { return Array.reverse(arr) }
+fn join(arr, delim) { return Array.join(arr, delim) }
+
+class GPU {
+    fn init() {
+        return gpu_dispatch(0.0, [])
+    }
+
+    fn count() {
+        return gpu_dispatch(1.0, [])
+    }
+
+    fn name() {
+        return gpu_dispatch(2.0, [])
+    }
+
+    fn total_memory() {
+        return gpu_dispatch(3.0, [])
+    }
+
+    fn free_memory() {
+        return gpu_dispatch(4.0, [])
+    }
+
+    fn is_available() {
+        return gpu_dispatch(5.0, [])
+    }
+
+    fn sync() {
+        return gpu_dispatch(6.0, [])
+    }
+
+    fn alloc(size_bytes) {
+        return gpu_dispatch(7.0, [size_bytes])
+    }
+
+    fn free(handle) {
+        return gpu_dispatch(8.0, [handle])
+    }
+
+    fn copy_to_device(handle, host_array) {
+        return gpu_dispatch(9.0, [handle, host_array])
+    }
+
+    fn copy_to_host(handle) {
+        return gpu_dispatch(10.0, [handle])
+    }
+
+    fn tensor(shape, initial_val) {
+        return gpu_dispatch(12.0, [shape, initial_val])
+    }
+
+    fn to_array(tensor_handle) {
+        return gpu_dispatch(15.0, [tensor_handle])
+    }
+
+    fn matmul(tensor_a, tensor_b) {
+        return gpu_dispatch(17.0, [tensor_a, tensor_b])
+    }
+
+    fn add(tensor_a, tensor_b) {
+        return gpu_dispatch(19.0, [tensor_a, tensor_b])
+    }
+
+    fn sub(tensor_a, tensor_b) {
+        return gpu_dispatch(20.0, [tensor_a, tensor_b])
+    }
+
+    fn mul(tensor_a, tensor_b) {
+        return gpu_dispatch(21.0, [tensor_a, tensor_b])
+    }
+
+    fn div(tensor_a, tensor_b) {
+        return gpu_dispatch(22.0, [tensor_a, tensor_b])
+    }
+
+    fn relu(tensor_a) {
+        return gpu_dispatch(24.0, [tensor_a])
+    }
+
+    fn time_ms() {
+        return gpu_dispatch(30.0, [])
     }
 }

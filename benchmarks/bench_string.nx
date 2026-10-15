@@ -1,0 +1,15 @@
+import stdlib
+
+fn main() {
+    let s = "NexusBaremetalSpeedTestStringOptimization2026"
+    let i = 0
+    let total_len = 0
+    while i < 50000 {
+        let h = sha256(s)
+        total_len += len(h)
+        i += 1
+    }
+    print(total_len)
+}
+
+main()

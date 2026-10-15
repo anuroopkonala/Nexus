@@ -1,0 +1,2 @@
+let s = "unterminated string literal without closing quote
+let y = 10

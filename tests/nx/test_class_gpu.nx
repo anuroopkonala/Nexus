@@ -1,0 +1,14 @@
+import stdlib
+
+class GPU {
+    fn my_stream() {
+        return gpu_dispatch(31.0, [])
+    }
+}
+
+fn main() {
+    let s = GPU.my_stream()
+    print(s)
+}
+
+main()

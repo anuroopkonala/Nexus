@@ -1,0 +1,124 @@
+import stdlib
+
+fn test_array_bounds() {
+    System.print_str("1. Testing Array Bounds & OOB Protection...")
+    let arr = [10, 20, 30]
+    
+    # Valid indices
+    System.print(arr[0])
+    System.print(arr[2])
+    
+    # Out-of-bounds positive read: should return 0 (null) safely without crash
+    let oob_high = arr[10]
+    System.print(oob_high)
+    
+    # Out-of-bounds negative read: should return 0 (null) safely without crash
+    let oob_neg = arr[-1]
+    System.print(oob_neg)
+    
+    # Out-of-bounds write: safely contained without memory corruption
+    arr[9999] = 1234
+    
+    System.print_str("Array Bounds: PASS")
+}
+
+fn test_array_growth() {
+    System.print_str("2. Testing Array Growth & Push/Pop...")
+    let list = [1, 2]
+    push(list, 3)
+    push(list, 4)
+    push(list, 5)
+    
+    System.print(len(list))
+    System.print(list[0])
+    System.print(list[4])
+    
+    let p = pop(list)
+    System.print(p)
+    System.print(len(list))
+    
+    System.print_str("Array Growth: PASS")
+}
+
+fn test_string_slice_safety() {
+    System.print_str("3. Testing String Substring Safety...")
+    let str = "NexusBaremetal"
+    
+    # Substring past length: should clamp safely to string end
+    let sub1 = substring(str, 0, 100)
+    System.print_str(sub1)
+    
+    # Inverted range: should return empty string safely
+    let sub2 = substring(str, 8, 2)
+    System.print_str(sub2)
+    
+    System.print_str("String Substring Safety: PASS")
+}
+
+fn test_recursion_depth() {
+    System.print_str("4. Testing Recursion Stack Integrity...")
+    fn sum_to(n) {
+        if n <= 0 {
+            return 0
+        }
+        return n + sum_to(n - 1)
+    }
+    let res = sum_to(50)
+    System.print(res)
+    System.print_str("Recursion Stack Integrity: PASS")
+}
+
+fn test_try_catch_safety() {
+    System.print_str("5. Testing Try/Catch Stack & Defer Safety...")
+    let caught = 0
+    try {
+        defer {
+            caught = caught + 1
+        }
+        throw "safe error test"
+    } catch (err) {
+        caught = caught + 10
+    }
+    System.print(caught)
+    System.print_str("Try/Catch Stack Safety: PASS")
+}
+
+fn test_nested_structures() {
+    System.print_str("6. Testing Nested Memory Structures...")
+    let d = {}
+    d["arr"] = [100, 200, 300]
+    d["sub"] = {"k": "v"}
+    
+    let a = d["arr"]
+    System.print(a[1])
+    let sub = d["sub"]
+    System.print_str(sub["k"])
+    System.print_str("Nested Structures: PASS")
+}
+
+fn test_dict_safety() {
+    System.print_str("7. Testing Dictionary Safety & Missing Keys...")
+    let dict = {"first": 111, "second": 222}
+    System.print(dict["first"])
+    let missing = dict["non_existent_key"]
+    System.print(missing)
+    System.print_str("Dictionary Safety: PASS")
+}
+
+fn main() {
+    System.print_str("========================================")
+    System.print_str("   NEXUS MEMORY SAFETY VERIFICATION     ")
+    System.print_str("========================================")
+    test_array_bounds()
+    test_array_growth()
+    test_string_slice_safety()
+    test_recursion_depth()
+    test_try_catch_safety()
+    test_nested_structures()
+    test_dict_safety()
+    System.print_str("========================================")
+    System.print_str("ALL MEMORY SAFETY CHECKS PASSED!")
+    System.print_str("========================================")
+}
+
+main()

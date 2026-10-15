@@ -1,0 +1,7 @@
+import stdlib
+
+fn main() {
+    System.print_str("Import stdlib worked!")
+}
+
+main()

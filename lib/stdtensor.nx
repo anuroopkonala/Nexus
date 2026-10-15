@@ -1,0 +1,311 @@
+// ==============================================================================
+// Nexus Baremetal - stdtensor Unified Tensor Module (NumPy + PyTorch Unified)
+// Direct Display Driver (nvcuda.dll) Hardware Interop & Pure Baremetal Execution
+// Ultra-High Performance (< CUDA host latency) with Native Hardware Memory Safety
+// Zero CRT - Zero Third-Party Runtimes - Full NumPy & PyTorch Facade Interop
+// ==============================================================================
+
+// --------------------------------------------------------------------------
+// Core Tensor Operations & Lifecycle Management
+// --------------------------------------------------------------------------
+class TensorOps {
+    fn create(shape, initial_val) {
+        return gpu_dispatch(12.0, [shape, initial_val])
+    }
+
+    fn from_array(shape, host_array) {
+        let h = gpu_dispatch(12.0, [shape, 0.0])
+        gpu_dispatch(9.0, [h, host_array])
+        return h
+    }
+
+    fn to_array(h) {
+        return gpu_dispatch(15.0, [h])
+    }
+
+    fn shape(h) {
+        return gpu_dispatch(13.0, [h])
+    }
+
+    fn reshape(h, new_shape) {
+        return gpu_dispatch(14.0, [h, new_shape])
+    }
+
+    fn get(h, r, c) {
+        return gpu_dispatch(16.0, [h, r, c])
+    }
+
+    fn set(h, r, c, val) {
+        return gpu_dispatch(60.0, [h, r, c, val])
+    }
+
+    fn device(h) {
+        return gpu_dispatch(61.0, [h])
+    }
+
+    fn to(h, dev) {
+        return gpu_dispatch(62.0, [h, dev])
+    }
+
+    fn cuda(h) {
+        return gpu_dispatch(62.0, [h, 1.0])
+    }
+
+    fn cpu(h) {
+        return gpu_dispatch(62.0, [h, 0.0])
+    }
+
+    fn is_cuda(h) {
+        let dev = gpu_dispatch(61.0, [h])
+        return dev == 1.0
+    }
+
+    fn free(h) {
+        return gpu_dispatch(8.0, [h])
+    }
+}
+
+// --------------------------------------------------------------------------
+// High-Performance Linear Algebra & Elementwise Mathematical Operations
+// --------------------------------------------------------------------------
+class TensorMath {
+    fn add(a, b) {
+        return gpu_dispatch(19.0, [a, b])
+    }
+
+    fn sub(a, b) {
+        return gpu_dispatch(20.0, [a, b])
+    }
+
+    fn mul(a, b) {
+        return gpu_dispatch(21.0, [a, b])
+    }
+
+    fn div(a, b) {
+        return gpu_dispatch(22.0, [a, b])
+    }
+
+    fn matmul(a, b) {
+        return gpu_dispatch(17.0, [a, b])
+    }
+
+    fn dot(a, b) {
+        return gpu_dispatch(17.0, [a, b])
+    }
+
+    fn transpose(a) {
+        return gpu_dispatch(18.0, [a])
+    }
+
+    fn sum(a) {
+        return gpu_dispatch(45.0, [a])
+    }
+
+    fn mean(a) {
+        return gpu_dispatch(46.0, [a])
+    }
+
+    fn scale(a, s) {
+        return gpu_dispatch(23.0, [a, s])
+    }
+}
+
+// --------------------------------------------------------------------------
+// Neural Network Acceleration Layer (PyTorch Compatible)
+// --------------------------------------------------------------------------
+class TensorNN {
+    fn relu(a) {
+        return gpu_dispatch(24.0, [a])
+    }
+
+    fn sigmoid(a) {
+        return gpu_dispatch(25.0, [a])
+    }
+
+    fn gelu(a) {
+        return gpu_dispatch(40.0, [a])
+    }
+
+    fn silu(a) {
+        return gpu_dispatch(41.0, [a])
+    }
+
+    fn softmax(a) {
+        return gpu_dispatch(42.0, [a])
+    }
+
+    fn layernorm(a, gamma, beta, eps) {
+        return gpu_dispatch(43.0, [a, gamma, beta, eps])
+    }
+
+    fn rmsnorm(a, gamma, eps) {
+        return gpu_dispatch(44.0, [a, gamma, eps])
+    }
+}
+
+// --------------------------------------------------------------------------
+// Unified Tensor Object Abstraction
+// --------------------------------------------------------------------------
+class Tensor {
+    fn zeros(shape) {
+        return TensorOps.create(shape, 0.0)
+    }
+
+    fn ones(shape) {
+        return TensorOps.create(shape, 1.0)
+    }
+
+    fn arange(start, stop, step) {
+        return gpu_dispatch(63.0, [start, stop, step])
+    }
+
+    fn eye(n) {
+        return gpu_dispatch(64.0, [n])
+    }
+
+    fn from_array(shape, host_array) {
+        return TensorOps.from_array(shape, host_array)
+    }
+
+    fn to_array(h) {
+        return TensorOps.to_array(h)
+    }
+
+    fn shape(h) {
+        return TensorOps.shape(h)
+    }
+
+    fn reshape(h, new_shape) {
+        return TensorOps.reshape(h, new_shape)
+    }
+
+    fn get(h, r, c) {
+        return TensorOps.get(h, r, c)
+    }
+
+    fn set(h, r, c, val) {
+        return TensorOps.set(h, r, c, val)
+    }
+
+    fn cuda(h) {
+        return TensorOps.cuda(h)
+    }
+
+    fn cpu(h) {
+        return TensorOps.cpu(h)
+    }
+
+    fn is_cuda(h) {
+        return TensorOps.is_cuda(h)
+    }
+
+    fn free(h) {
+        return TensorOps.free(h)
+    }
+}
+
+// --------------------------------------------------------------------------
+// NumPy Facade (np) - Idiomatic NumPy Syntax
+// --------------------------------------------------------------------------
+class np {
+    fn zeros(shape) {
+        return TensorOps.create(shape, 0.0)
+    }
+
+    fn ones(shape) {
+        return TensorOps.create(shape, 1.0)
+    }
+
+    fn full(shape, val) {
+        return TensorOps.create(shape, val)
+    }
+
+    fn arange(start, stop, step) {
+        return gpu_dispatch(63.0, [start, stop, step])
+    }
+
+    fn range(stop) {
+        return gpu_dispatch(63.0, [0.0, stop, 1.0])
+    }
+
+    fn eye(n) {
+        return gpu_dispatch(64.0, [n])
+    }
+
+    fn array(host_array, shape) {
+        return TensorOps.from_array(shape, host_array)
+    }
+
+    fn matmul(a, b) {
+        return TensorMath.matmul(a, b)
+    }
+
+    fn dot(a, b) {
+        return TensorMath.dot(a, b)
+    }
+
+    fn transpose(a) {
+        return TensorMath.transpose(a)
+    }
+
+    fn sum(a) {
+        return TensorMath.sum(a)
+    }
+
+    fn mean(a) {
+        return TensorMath.mean(a)
+    }
+}
+
+// --------------------------------------------------------------------------
+// PyTorch Facade (torch) - Idiomatic PyTorch Syntax
+// --------------------------------------------------------------------------
+class torch {
+    fn tensor(host_array, shape) {
+        return TensorOps.from_array(shape, host_array)
+    }
+
+    fn zeros(shape) {
+        return TensorOps.create(shape, 0.0)
+    }
+
+    fn ones(shape) {
+        return TensorOps.create(shape, 1.0)
+    }
+
+    fn eye(n) {
+        return gpu_dispatch(64.0, [n])
+    }
+
+    fn arange(start, stop, step) {
+        return gpu_dispatch(63.0, [start, stop, step])
+    }
+
+    fn matmul(a, b) {
+        return TensorMath.matmul(a, b)
+    }
+
+    fn relu(a) {
+        return TensorNN.relu(a)
+    }
+
+    fn gelu(a) {
+        return TensorNN.gelu(a)
+    }
+
+    fn softmax(a) {
+        return TensorNN.softmax(a)
+    }
+
+    fn cuda_is_available() {
+        return gpu_dispatch(5.0, [])
+    }
+
+    fn device_count() {
+        return gpu_dispatch(1.0, [])
+    }
+
+    fn device_name() {
+        return gpu_dispatch(2.0, [])
+    }
+}

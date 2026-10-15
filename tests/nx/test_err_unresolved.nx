@@ -1,0 +1,8 @@
+import stdlib
+
+fn main() {
+    let s = "hello"
+    s.unknown_unregistered_func()
+}
+
+main()

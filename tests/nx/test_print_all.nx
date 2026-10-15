@@ -1,0 +1,55 @@
+# ============================================================================
+# Test Whole Printing of All Built-in Interpreter Data Types in Nexus
+# (Numbers, Strings, Characters, Booleans, Arrays, Dictionaries)
+# ============================================================================
+
+# 1. Numbers (Positive Integers, Negative Integers, Zero, Floats)
+print(42)
+print(-10)
+print(0)
+print(3.14)
+print(-2.718)
+
+# 2. Strings
+print("Nexus Language")
+print("")
+
+# 3. Characters (Single-quote & Double-quote character literals)
+print('A')
+print('Z')
+print("B")
+
+# 4. Booleans
+print(true)
+print(false)
+
+# 5. Arrays (Empty, Numbers with Zero, Chars, Strings, Booleans, Nested, Heterogeneous)
+let arr_empty = []
+print(arr_empty)
+
+let arr_nums = [0, 1, 2, 3]
+print(arr_nums)
+
+let arr_chars = ['A', 'B', 'C']
+print(arr_chars)
+
+let arr_nested = [[1, 2], [3, 4]]
+print(arr_nested)
+
+let arr_mixed = [100, "hello", 'X', true, false, 0, [3.14, "nested", [99]]]
+print(arr_mixed)
+
+# 6. Dictionaries (Built-in Key-Value Mapping of Interpreter Types)
+let empty_dict = {}
+print(empty_dict)
+
+let dict_builtins = {
+    "name": "Nexus",
+    "initial": 'N',
+    "ready": true,
+    "zero": 0,
+    "scores": [95, 98, 100]
+}
+print(dict_builtins)
+
+print("PASS")

@@ -1,0 +1,80 @@
+import stdlib
+
+let msg = "Nexus Baremetal High Performance Cybersecurity Runtime"
+let key = "MySecretKey12345"
+
+let ct = Crypto.aes_encrypt(msg, key)
+System.print_str("Ciphertext:")
+System.print_str(ct)
+
+let pt = Crypto.aes_decrypt(ct, key)
+System.print_str("Decrypted:")
+System.print_str(pt)
+
+if pt == msg {
+    System.print_str("PASS: Crypto.aes_encrypt/decrypt")
+} else {
+    System.print_str("FAIL: Crypto.aes_encrypt/decrypt")
+}
+
+let ct2 = aes_encrypt("Standalone AES Test", "AnotherKey123456")
+let pt2 = aes_decrypt(ct2, "AnotherKey123456")
+if pt2 == "Standalone AES Test" {
+    System.print_str("PASS: direct aes_encrypt/decrypt")
+} else {
+    System.print_str("FAIL: direct aes_encrypt/decrypt")
+}
+
+let hmac_key = "Jefe"
+let hmac_data = "what do ya want for nothing?"
+let hmac_val = Crypto.hmac_sha256(hmac_data, hmac_key)
+
+System.print_str("Computed HMAC:")
+System.print_str(hmac_val)
+
+let expected_hmac = "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+if hmac_val == expected_hmac {
+    System.print_str("PASS: Crypto.hmac_sha256 RFC 4231 Vector")
+} else {
+    System.print_str("FAIL: Crypto.hmac_sha256 RFC 4231 Vector")
+}
+
+let hmac_val2 = hmac_sha256(hmac_data, hmac_key)
+if hmac_val2 == expected_hmac {
+    System.print_str("PASS: direct hmac_sha256")
+} else {
+    System.print_str("FAIL: direct hmac_sha256")
+}
+
+let rnd1 = Crypto.random_bytes(16)
+let rnd2 = Crypto.random_bytes(16)
+
+System.print_str("Random bytes 1:")
+System.print_str(rnd1)
+System.print_str("Random bytes 2:")
+System.print_str(rnd2)
+
+let rnd1_len = len(rnd1)
+let rnd2_len = len(rnd2)
+
+if rnd1_len == 32 {
+    System.print_str("PASS: random_bytes length 32")
+} else {
+    System.print_str("FAIL: random_bytes length 32")
+}
+
+if rnd1 != rnd2 {
+    System.print_str("PASS: random_bytes uniqueness")
+} else {
+    System.print_str("FAIL: random_bytes uniqueness")
+}
+
+let rnd3 = random_bytes(32)
+let rnd3_len = len(rnd3)
+if rnd3_len == 64 {
+    System.print_str("PASS: direct random_bytes length 64")
+} else {
+    System.print_str("FAIL: direct random_bytes length 64")
+}
+
+System.print_str("ALL OPTION B TESTS COMPLETED")

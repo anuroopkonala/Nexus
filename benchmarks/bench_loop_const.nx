@@ -1,0 +1,11 @@
+fn main() {
+    let sum = 0
+    let i = 0
+    while i < 50000000 {
+        sum += i
+        i += 1
+    }
+    print(sum)
+}
+
+main()

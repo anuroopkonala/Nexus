@@ -1,4 +1,4 @@
-import "stdlib.nx"
+import stdlib
 
 fn main() {
     let sum = 0

@@ -1,0 +1,118 @@
+import stdlib
+
+fn test_system_time() {
+    System.print_str("--- Test System Time ---")
+    let t1 = time_ms()
+    System.print(t1)
+    if t1 > 0.0 {
+        System.print_str("PASS: global time_ms > 0")
+    } else {
+        System.print_str("FAIL: global time_ms > 0")
+    }
+
+    let t2 = System.time_ms()
+    System.print(t2)
+    if t2 >= t1 {
+        System.print_str("PASS: System.time_ms >= t1")
+    } else {
+        System.print_str("FAIL: System.time_ms >= t1")
+    }
+
+    let t3 = os.time_ms()
+    if t3 >= t2 {
+        System.print_str("PASS: os.time_ms >= t2")
+    } else {
+        System.print_str("FAIL: os.time_ms >= t2")
+    }
+}
+
+fn test_environment() {
+    System.print_str("--- Test Environment Variables ---")
+    
+    # Set and get via global
+    set_env("NEXUS_ENV_TEST", "AlphaOmega")
+    let val1 = get_env("NEXUS_ENV_TEST")
+    System.print_str(val1)
+    if val1 == "AlphaOmega" {
+        System.print_str("PASS: global get_env/set_env")
+    } else {
+        System.print_str("FAIL: global get_env/set_env")
+    }
+
+    # Set and get via System
+    System.set_env("NEXUS_ENV_TEST", "SystemValue")
+    let val2 = System.get_env("NEXUS_ENV_TEST")
+    System.print_str(val2)
+    if val2 == "SystemValue" {
+        System.print_str("PASS: System.get_env/set_env")
+    } else {
+        System.print_str("FAIL: System.get_env/set_env")
+    }
+
+    # Set and get via os
+    os.set_env("NEXUS_ENV_TEST", "OsValue")
+    let val3 = os.get_env("NEXUS_ENV_TEST")
+    System.print_str(val3)
+    if val3 == "OsValue" {
+        System.print_str("PASS: os.get_env/set_env")
+    } else {
+        System.print_str("FAIL: os.get_env/set_env")
+    }
+
+    # Test non-existent variable
+    let empty_val = get_env("NON_EXISTENT_VAR_XYZZY")
+    if empty_val == "" {
+        System.print_str("PASS: non-existent env is empty string")
+    } else {
+        System.print_str("FAIL: non-existent env is empty string")
+    }
+}
+
+fn test_system_args() {
+    System.print_str("--- Test System Args ---")
+    let a = args()
+    let count = len(a)
+    System.print(count)
+    if count >= 1.0 {
+        System.print_str("PASS: args() length >= 1")
+        System.print_str(a[0])
+    } else {
+        System.print_str("FAIL: args() length >= 1")
+    }
+
+    let a_sys = System.args()
+    if len(a_sys) == count {
+        System.print_str("PASS: System.args() matches args()")
+    } else {
+        System.print_str("FAIL: System.args() matches args()")
+    }
+}
+
+fn test_system_exec() {
+    System.print_str("--- Test System Exec ---")
+    let res0 = exec("cmd.exe /c exit 0")
+    System.print(res0)
+    if res0 == 0.0 {
+        System.print_str("PASS: exec exit 0")
+    } else {
+        System.print_str("FAIL: exec exit 0")
+    }
+
+    let res42 = System.exec("cmd.exe /c exit 42")
+    System.print(res42)
+    if res42 == 42.0 {
+        System.print_str("PASS: System.exec exit 42")
+    } else {
+        System.print_str("FAIL: System.exec exit 42")
+    }
+}
+
+fn main() {
+    test_system_time()
+    test_environment()
+    test_system_args()
+    test_system_exec()
+    System.print_str("ALL OPTION A TESTS COMPLETED")
+}
+
+main()

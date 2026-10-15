@@ -1,0 +1,49 @@
+import stdlib
+
+fn square(x) {
+    return x * x
+}
+
+fn is_gt_three(x) {
+    return x > 3.0
+}
+
+let nums = [1.0, 2.0, 3.0, 4.0, 5.0]
+
+# Test 1: Method syntax nums.map(square)
+let sq = nums.map(square)
+System.print_str("Mapped length:")
+System.print(len(sq))
+System.print_str("Mapped[0]:")
+System.print(sq[0])
+System.print_str("Mapped[4]:")
+System.print(sq[4])
+
+# Test 2: Method syntax nums.filter(is_gt_three)
+let fl = nums.filter(is_gt_three)
+System.print_str("Filtered length:")
+System.print(len(fl))
+System.print_str("Filtered[0]:")
+System.print(fl[0])
+System.print_str("Filtered[1]:")
+System.print(fl[1])
+
+# Test 3: Standalone syntax map(nums, square)
+let sq2 = map(nums, square)
+System.print_str("Standalone map length:")
+System.print(len(sq2))
+
+# Test 4: Standalone syntax filter(nums, is_gt_three)
+let fl2 = filter(nums, is_gt_three)
+System.print_str("Standalone filter length:")
+System.print(len(fl2))
+
+# Test 5: Dictionary indexing d[key] = val and d[key]
+let d = {}
+d["test_key"] = "NEXUS_EXPRESSIVE_OK"
+System.print_str("Dict value:")
+System.print_str(d["test_key"])
+
+if d["test_key"] == "NEXUS_EXPRESSIVE_OK" {
+    System.print_str("ALL TESTS PASSED!")
+}

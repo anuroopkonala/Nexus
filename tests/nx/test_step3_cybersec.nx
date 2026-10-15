@@ -1,0 +1,182 @@
+import stdlib
+
+fn test_global_crypto() {
+    System.print_str("--- Test Global Functions ---")
+    
+    # SHA-256 test vectors
+    let h1 = sha256("")
+    System.print_str(h1)
+    if h1 == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+        System.print_str("PASS: sha256 empty")
+    } else {
+        System.print_str("FAIL: sha256 empty")
+    }
+
+    let h2 = sha256("hello")
+    System.print_str(h2)
+    if h2 == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+        System.print_str("PASS: sha256 hello")
+    } else {
+        System.print_str("FAIL: sha256 hello")
+    }
+
+    # MD5 test vectors
+    let m1 = md5("")
+    System.print_str(m1)
+    if m1 == "d41d8cd98f00b204e9800998ecf8427e" {
+        System.print_str("PASS: md5 empty")
+    } else {
+        System.print_str("FAIL: md5 empty")
+    }
+
+    let m2 = md5("hello")
+    System.print_str(m2)
+    if m2 == "5d41402abc4b2a76b9719d911017c592" {
+        System.print_str("PASS: md5 hello")
+    } else {
+        System.print_str("FAIL: md5 hello")
+    }
+
+    # Base64 test vectors
+    let b1 = base64_encode("Hello, World!")
+    System.print_str(b1)
+    if b1 == "SGVsbG8sIFdvcmxkIQ==" {
+        System.print_str("PASS: base64_encode")
+    } else {
+        System.print_str("FAIL: base64_encode")
+    }
+
+    let d1 = base64_decode(b1)
+    System.print_str(d1)
+    if d1 == "Hello, World!" {
+        System.print_str("PASS: base64_decode")
+    } else {
+        System.print_str("FAIL: base64_decode")
+    }
+
+    # Hex test vectors
+    let x1 = hex_encode("Nexus")
+    System.print_str(x1)
+    if x1 == "4e65787573" {
+        System.print_str("PASS: hex_encode")
+    } else {
+        System.print_str("FAIL: hex_encode")
+    }
+
+    let xd1 = hex_decode(x1)
+    System.print_str(xd1)
+    if xd1 == "Nexus" {
+        System.print_str("PASS: hex_decode")
+    } else {
+        System.print_str("FAIL: hex_decode")
+    }
+
+    # XOR mask symmetric test
+    let raw = "Confidential Payload"
+    let key = "SecretKey99"
+    let enc = xor_mask(raw, key)
+    let dec = xor_mask(enc, key)
+    System.print_str(dec)
+    if dec == raw {
+        System.print_str("PASS: xor_mask symmetric roundtrip")
+    } else {
+        System.print_str("FAIL: xor_mask symmetric roundtrip")
+    }
+}
+
+fn test_class_crypto() {
+    System.print_str("--- Test Crypto Class Methods ---")
+    
+    let h = Crypto.sha256("hello")
+    if h == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+        System.print_str("PASS: Crypto.sha256")
+    } else {
+        System.print_str("FAIL: Crypto.sha256")
+    }
+
+    let m = Crypto.md5("hello")
+    if m == "5d41402abc4b2a76b9719d911017c592" {
+        System.print_str("PASS: Crypto.md5")
+    } else {
+        System.print_str("FAIL: Crypto.md5")
+    }
+
+    let b = Crypto.base64_encode("test")
+    let bd = Crypto.base64_decode(b)
+    if bd == "test" {
+        System.print_str("PASS: Crypto.base64")
+    } else {
+        System.print_str("FAIL: Crypto.base64")
+    }
+
+    let x = Crypto.hex_encode("NexusCyber")
+    let xd = Crypto.hex_decode(x)
+    if xd == "NexusCyber" {
+        System.print_str("PASS: Crypto.hex")
+    } else {
+        System.print_str("FAIL: Crypto.hex")
+    }
+
+    let xor_dec = Crypto.xor_mask(Crypto.xor_mask("CyberSecurity", "mask"), "mask")
+    if xor_dec == "CyberSecurity" {
+        System.print_str("PASS: Crypto.xor_mask")
+    } else {
+        System.print_str("FAIL: Crypto.xor_mask")
+    }
+}
+
+fn test_method_syntax() {
+    System.print_str("--- Test Instance Method Syntax ---")
+
+    let str = "hello"
+    let h = str.sha256()
+    if h == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+        System.print_str("PASS: str.sha256()")
+    } else {
+        System.print_str("FAIL: str.sha256()")
+    }
+
+    let m = str.md5()
+    if m == "5d41402abc4b2a76b9719d911017c592" {
+        System.print_str("PASS: str.md5()")
+    } else {
+        System.print_str("FAIL: str.md5()")
+    }
+
+    let msg = "Hello, World!"
+    let b64 = msg.base64_encode()
+    let orig = b64.base64_decode()
+    if orig == msg {
+        System.print_str("PASS: msg.base64_encode().base64_decode()")
+    } else {
+        System.print_str("FAIL: msg.base64_encode().base64_decode()")
+    }
+
+    let hx = msg.hex_encode()
+    let hx_orig = hx.hex_decode()
+    if hx_orig == msg {
+        System.print_str("PASS: msg.hex_encode().hex_decode()")
+    } else {
+        System.print_str("FAIL: msg.hex_encode().hex_decode()")
+    }
+
+    let secret = "TopSecretBuffer"
+    let masked = secret.xor_mask("SIMD_Key_1234567")
+    let unmasked = masked.xor_mask("SIMD_Key_1234567")
+    if unmasked == secret {
+        System.print_str("PASS: secret.xor_mask(key)")
+    } else {
+        System.print_str("FAIL: secret.xor_mask(key)")
+    }
+}
+
+fn main() {
+    System.print_str("=== Step 3: Cybersec Primitives Suite ===")
+    test_global_crypto()
+    test_class_crypto()
+    test_method_syntax()
+    System.print_str("=== ALL STEP 3 TESTS PASSED ===")
+}
+
+main()
+

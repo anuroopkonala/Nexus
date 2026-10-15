@@ -1,0 +1,32 @@
+import stdlib
+
+fn main() {
+    System.print_str("--- Testing File I/O ---")
+    let test_file = "tests/nx/test_io_temp.txt"
+    let msg = "Hello Nexus I/O World!"
+
+    // Write text to file
+    File.write_text(test_file, msg)
+    System.print_str("File written successfully")
+
+    // Read text from file
+    let content = File.read_text(test_file)
+    System.print_str("Read content:")
+    System.print_str(content)
+
+    let l = len(content)
+    System.print(l)
+
+    // Direct low-level handles
+    let f = File.open(test_file)
+    let chunk = File.read(f, 5)
+    File.close(f)
+
+    System.print_str("Chunk:")
+    System.print_str(chunk)
+    System.print(len(chunk))
+
+    System.print_str("All File I/O tests PASS!")
+}
+
+main()

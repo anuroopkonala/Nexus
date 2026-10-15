@@ -1,0 +1,59 @@
+import stdlib
+import stdgpu
+
+fn main() {
+    print("==================================================")
+    print("Nexus GPU vs Native CUDA Performance Benchmark")
+    print("==================================================")
+
+    GPU.init()
+
+    // 1. Vector Add Benchmark (1,000,000 floats x 50 iterations)
+    let n = 1000000
+    let a = GPU.alloc(n * 4)
+    let b = GPU.alloc(n * 4)
+    let c = GPU.alloc(n * 4)
+
+    // Warmup
+    gpu_dispatch(19.0, [a, b, c])
+    GPU.sync()
+
+    let t0 = System.time_ms()
+    let i = 0
+    while i < 50 {
+        gpu_dispatch(19.0, [a, b, c])
+        i = i + 1
+    }
+    GPU.sync()
+    let t1 = System.time_ms()
+    let nexus_vec_add = t1 - t0
+    print("NEXUS_VEC_ADD_50_ITERS_MS:")
+    print(nexus_vec_add)
+
+    // 2. GEMM 256x256 Benchmark (50 iterations)
+    let m = 256
+    let tA = GPU.tensor([m, m], 1.0)
+    let tB = GPU.tensor([m, m], 2.0)
+
+    // Warmup
+    let tC = GPU.matmul(tA, tB)
+    GPU.sync()
+
+    let t2 = System.time_ms()
+    let j = 0
+    while j < 50 {
+        gpu_dispatch(17.0, [tA, tB, tC])
+        j = j + 1
+    }
+    GPU.sync()
+    let t3 = System.time_ms()
+    let nexus_gemm = t3 - t2
+    print("NEXUS_GEMM_256_50_ITERS_MS:")
+    print(nexus_gemm)
+
+    GPU.free(a)
+    GPU.free(b)
+    GPU.free(c)
+}
+
+main()

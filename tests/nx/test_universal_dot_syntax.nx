@@ -1,0 +1,91 @@
+import stdlib
+
+fn main() {
+    System.print_str("--- Universal Dot Syntax Test Suite ---")
+
+    // 1. String methods via dot syntax
+    let s = "Nexus Universal Dot Syntax"
+    System.print(s.len())
+    System.print_str(s.upper())
+    System.print_str(s.lower())
+    System.print_str(s.to_upper())
+    System.print_str(s.to_lower())
+
+    let parts = s.split(" ")
+    System.print(parts.len())
+    System.print_str(parts[0])
+    System.print_str(parts[1])
+    System.print_str(parts[2])
+    System.print_str(parts[3])
+
+    let sub = s.substring(0, 5)
+    System.print_str(sub)
+
+    let has_uni = s.contains("Universal")
+    System.print(has_uni)
+
+    let idx = s.index_of("Universal")
+    System.print(idx)
+
+    // Crypto string methods via dot syntax
+    let raw = "hello"
+    let h_sha = raw.sha256()
+    let h_md5 = raw.md5()
+    let b64 = raw.base64_encode()
+    let b64_dec = b64.base64_decode()
+    let hex = raw.hex_encode()
+    let hex_dec = hex.hex_decode()
+    if b64_dec == "hello" {
+        System.print_str("PASS: String crypto methods via dot syntax")
+    }
+
+    // 2. Array methods via dot syntax
+    let arr = [100, 200, 300]
+    System.print(arr.len())
+    arr.push(400)
+    System.print(arr.len())
+    let last = arr.pop()
+    System.print(last)
+    System.print(arr.len())
+
+    let sliced = arr.slice(0, 2)
+    System.print(sliced.len())
+    System.print(sliced[0])
+    System.print(sliced[1])
+
+    // 3. Dict methods via dot syntax
+    let d = { "key1": 10, "key2": 20 }
+    let hk = d.has_key("key1")
+    System.print(hk)
+    let ks = d.keys()
+    System.print(ks.len())
+    let vs = d.values()
+    System.print(vs.len())
+
+    // 4. File methods via dot syntax
+    let temp_f = "scratch/temp_file_dot.txt"
+    write_all(temp_f, "ABCDEF123456")
+    let fh = fopen(temp_f)
+    let data = fh.read(6)
+    System.print_str(data)
+    fh.close()
+
+    // 5. Socket methods via dot syntax
+    let port = 27777
+    let srv = Socket.listen(port)
+    let cli = Socket.connect("127.0.0.1", port)
+    let peer = srv.accept()
+    cli.send("DOT_NET_TEST")
+    let msg = peer.recv(64)
+    System.print_str(msg)
+    peer.send("DOT_ACK")
+    let ack = cli.recv(64)
+    System.print_str(ack)
+    cli.close()
+    peer.close()
+    srv.close()
+
+    System.print_str("ALL UNIVERSAL DOT SYNTAX TESTS PASSED")
+}
+
+main()
