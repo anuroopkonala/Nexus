@@ -1665,6 +1665,10 @@ gc_malloc:
     ret
 
 run_gc:
+    cmp qword ptr [rip + active_dynamic_buf], 0
+    jnz 10f
+    ret
+10:
     push rbp
     mov rbp, rsp
     push rbx
@@ -10262,7 +10266,9 @@ crash_handler:
     sub rsp, 32
     call scan_and_diagnose_preflight
     add rsp, 32
-    jmp .crash_flush_exit
+    test eax, eax
+    jnz .crash_flush_exit
+    jmp .err_runtime_access
 
 .err_runtime_access:
     mov rcx, [rip + cli_source_file]

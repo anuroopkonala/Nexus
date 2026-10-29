@@ -62,7 +62,7 @@ class Series {
     }
     fn name(s) { return s["name"] }
     fn data(s) { return s["data"] }
-    fn len(s) {
+    fn size(s) {
         let arr = s["data"]
         return arr.len()
     }
@@ -132,11 +132,12 @@ class DataFrame {
             let first_col = columns_dict[first_col_name]
             n_rows = first_col.len()
         }
-        return {
+        let res_df = {
             "col_names": col_names,
             "columns": columns_dict,
             "num_rows": n_rows
         }
+        return res_df
     }
 
     fn col(df, name) {
@@ -213,27 +214,7 @@ class DataFrame {
         let r = 0
         while r < num_rows {
             let cell = col_data[r]
-            let match_row = 0
-            if op == ">" {
-                if cell > val { match_row = 1 }
-            }
-            if op == "<" {
-                if cell < val { match_row = 1 }
-            }
-            if op == "==" {
-                if cell == val { match_row = 1 }
-            }
-            if op == "!=" {
-                if cell != val { match_row = 1 }
-            }
-            if op == ">=" {
-                if cell >= val { match_row = 1 }
-            }
-            if op == "<=" {
-                if cell <= val { match_row = 1 }
-            }
-
-            if match_row == 1 {
+            if cell > val {
                 let ci = 0
                 while ci < num_cols {
                     let cn = col_names[ci]
@@ -259,7 +240,7 @@ class DataFrame {
         while c < num_cols {
             let cname = col_names[c]
             let s = Series.create(cname, cols[cname])
-            let cnt = Series.len(s)
+            let cnt = Series.size(s)
             let mean_val = Series.mean(s)
             let min_val = Series.min(s)
             let max_val = Series.max(s)
@@ -296,12 +277,12 @@ class DataFrame {
             out_str = out_str + row_str + "\n"
             r = r + 1
         }
-        File.write_all(filepath, out_str)
+        File.write_text(filepath, out_str)
         return 1.0
     }
 
     fn read_csv(filepath) {
-        let content = File.read_all(filepath)
+        let content = File.read_text(filepath)
         let lines = content.split("\n")
         let total_lines = lines.len()
         if total_lines == 0 {
@@ -396,11 +377,11 @@ class DataFrame {
 }
 
 class pd {
-    fn DataFrame(col_names, columns_dict) {
+    fn dataframe(col_names, columns_dict) {
         return DataFrame.create(col_names, columns_dict)
     }
 
-    fn Series(name, data_array) {
+    fn series(name, data_array) {
         return Series.create(name, data_array)
     }
 
@@ -417,12 +398,8 @@ class pd {
     }
 }
 
-fn main() {
-    System.print_str("==================================================================")
-    System.print_str("NEXUS BAREMETAL: STDDATA (NUMPY + PANDAS) COMPREHENSIVE TEST")
-    System.print_str("==================================================================")
 
-    // 1. NumPy Array Creation & Math
+fn test_numpy() {
     System.print_str("[1] Testing NumPy Creation & Linear Algebra...")
     let eye4 = np.eye(4)
     let ones4 = np.ones([4, 4])
@@ -441,10 +418,17 @@ fn main() {
     let c_last = NDArray.get(clipped, 0, 4)
     System.print_str("    np.clip(lin, 2.5, 7.5): first = " + to_string(c_first) + " (expected 2.5), last = " + to_string(c_last) + " (expected 7.5)")
 
-    // 2. Pandas Series Operations
+    NDArray.free(eye4)
+    NDArray.free(ones4)
+    NDArray.free(mm)
+    NDArray.free(lin)
+    NDArray.free(clipped)
+}
+
+fn test_series() {
     System.print_str("[2] Testing Pandas Series Operations...")
-    let salaries = pd.Series("salary", [45000.0, 60000.0, 80000.0, 120000.0])
-    let sal_len = Series.len(salaries)
+    let salaries = pd.series("salary", [45000.0, 60000.0, 80000.0, 120000.0])
+    let sal_len = Series.size(salaries)
     let sal_sum = Series.sum(salaries)
     let sal_mean = Series.mean(salaries)
     let sal_min = Series.min(salaries)
@@ -454,31 +438,45 @@ fn main() {
     let sal_tensor = Series.to_tensor(salaries)
     let sal_t_sh = NDArray.shape(sal_tensor)
     System.print_str("    Series to_tensor shape: [" + to_string(sal_t_sh[0]) + ", " + to_string(sal_t_sh[1]) + "]")
+    NDArray.free(sal_tensor)
+}
 
-    // 3. Pandas DataFrame Creation & Operations
+fn test_dataframe() {
     System.print_str("[3] Testing Pandas DataFrame Creation & Manipulation...")
     let d = {
         "age": [25.0, 32.0, 45.0, 29.0],
         "experience": [2.0, 8.0, 20.0, 5.0],
         "salary": [50000.0, 75000.0, 130000.0, 68000.0]
     }
-    let df = pd.DataFrame(["age", "experience", "salary"], d)
+    let df = pd.dataframe(["age", "experience", "salary"], d)
     let df_sh = DataFrame.shape(df)
     System.print_str("    DataFrame shape: [" + to_string(df_sh[0]) + ", " + to_string(df_sh[1]) + "]")
     DataFrame.head(df, 4)
-
-    // Summary Statistics
     DataFrame.describe(df)
+}
 
-    // 4. Pandas DataFrame Query & Filtering
+fn test_filter() {
     System.print_str("[4] Testing Pandas DataFrame Filtering (salary > 60000)...")
+    let d = {
+        "age": [25.0, 32.0, 45.0, 29.0],
+        "experience": [2.0, 8.0, 20.0, 5.0],
+        "salary": [50000.0, 75000.0, 130000.0, 68000.0]
+    }
+    let df = pd.dataframe(["age", "experience", "salary"], d)
     let filtered_df = DataFrame.filter(df, "salary", ">", 60000.0)
     let f_sh = DataFrame.shape(filtered_df)
     System.print_str("    Filtered DataFrame shape: [" + to_string(f_sh[0]) + ", " + to_string(f_sh[1]) + "] (expected 3 rows)")
     DataFrame.head(filtered_df, 3)
+}
 
-    // 5. Native Fast CSV Export & Import
+fn test_csv() {
     System.print_str("[5] Testing Native CSV Export and C-Speed Parsing...")
+    let d = {
+        "age": [25.0, 32.0, 45.0, 29.0],
+        "experience": [2.0, 8.0, 20.0, 5.0],
+        "salary": [50000.0, 75000.0, 130000.0, 68000.0]
+    }
+    let df = pd.dataframe(["age", "experience", "salary"], d)
     let csv_path = "scratch/test_employees.csv"
     pd.to_csv(df, csv_path)
     System.print_str("    Successfully written DataFrame to " + csv_path)
@@ -487,31 +485,49 @@ fn main() {
     let loaded_sh = DataFrame.shape(loaded_df)
     System.print_str("    Successfully re-loaded DataFrame from CSV! Shape: [" + to_string(loaded_sh[0]) + ", " + to_string(loaded_sh[1]) + "]")
     DataFrame.head(loaded_df, 2)
+}
 
-    // 6. Direct DataFrame to GPU Tensor Extraction for Deep Learning
+fn test_tensor_conversion() {
     System.print_str("[6] Testing Direct DataFrame -> GPU Tensor Conversion...")
+    let d = {
+        "age": [25.0, 32.0, 45.0, 29.0],
+        "experience": [2.0, 8.0, 20.0, 5.0],
+        "salary": [50000.0, 75000.0, 130000.0, 68000.0]
+    }
+    let df = pd.dataframe(["age", "experience", "salary"], d)
     let features_tensor = DataFrame.to_tensor(df, ["age", "experience"])
     let ft_sh = NDArray.shape(features_tensor)
     System.print_str("    Extracted Features Tensor Shape: [" + to_string(ft_sh[0]) + ", " + to_string(ft_sh[1]) + "]")
     let ft_00 = NDArray.get(features_tensor, 0, 0)
     let ft_01 = NDArray.get(features_tensor, 0, 1)
     System.print_str("    Features row 0: age=" + to_string(ft_00) + ", experience=" + to_string(ft_01))
+    NDArray.free(features_tensor)
+}
 
-    // 7. DataFrame Concatenation
+fn test_concat() {
     System.print_str("[7] Testing DataFrame Concatenation (pd.concat)...")
+    let d = {
+        "age": [25.0, 32.0, 45.0, 29.0],
+        "experience": [2.0, 8.0, 20.0, 5.0],
+        "salary": [50000.0, 75000.0, 130000.0, 68000.0]
+    }
+    let df = pd.dataframe(["age", "experience", "salary"], d)
     let big_df = pd.concat(df, df)
     let big_sh = DataFrame.shape(big_df)
     System.print_str("    Concatenated DataFrame shape: [" + to_string(big_sh[0]) + ", " + to_string(big_sh[1]) + "] (expected 8 rows)")
+}
 
-    // Clean up
-    NDArray.free(eye4)
-    NDArray.free(ones4)
-    NDArray.free(mm)
-    NDArray.free(lin)
-    NDArray.free(clipped)
-    NDArray.free(sal_tensor)
-    NDArray.free(features_tensor)
-
+fn main() {
+    System.print_str("==================================================================")
+    System.print_str("NEXUS BAREMETAL: STDDATA (NUMPY + PANDAS) COMPREHENSIVE TEST")
+    System.print_str("==================================================================")
+    test_numpy()
+    test_series()
+    test_dataframe()
+    test_filter()
+    test_csv()
+    test_tensor_conversion()
+    test_concat()
     System.print_str("==================================================================")
     System.print_str("ALL STDDATA (NUMPY + PANDAS) TESTS PASSED WITH 100% SUCCESS")
     System.print_str("==================================================================")

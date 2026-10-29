@@ -181,8 +181,8 @@ class torch {
 class LinearLayer {
     fn create(in_features, out_features) {
         let w = torch.randn(in_features, out_features)
-        let b = torch.zeros([1.0, to_string(out_features)])
-        return {
+        let b = torch.zeros([1.0, out_features])
+        let obj = {
             "type": "linear",
             "weights": w,
             "bias": b,
@@ -190,6 +190,7 @@ class LinearLayer {
             "grad_b": 0,
             "last_x": 0
         }
+        return obj
     }
 
     fn forward(layer, x) {
@@ -229,14 +230,15 @@ class LinearLayer {
 }
 
 // --------------------------------------------------------------------------
-// Sequential Container (nn.Sequential)
+// Sequential Container (nn.sequential)
 // --------------------------------------------------------------------------
 class Sequential {
     fn create(layers_list) {
-        return {
+        let obj = {
             "layers": layers_list,
             "num_layers": layers_list.len()
         }
+        return obj
     }
 
     fn forward(model, x) {
@@ -272,11 +274,11 @@ class Sequential {
         let i = 0
         while i < n {
             let layer = layers[i]
-            params.push({
+            params = params.push({
                 "layer": layer,
                 "is_bias": 0.0
             })
-            params.push({
+            params = params.push({
                 "layer": layer,
                 "is_bias": 1.0
             })
@@ -287,7 +289,7 @@ class Sequential {
 }
 
 // --------------------------------------------------------------------------
-// Mean Squared Error Loss Function (nn.MSELoss)
+// Mean Squared Error Loss Function (nn.mse_loss)
 // --------------------------------------------------------------------------
 class MSELoss {
     fn forward(pred, target) {
@@ -307,16 +309,36 @@ class MSELoss {
 // Top-Level Neural Network Module Facade (nn)
 // --------------------------------------------------------------------------
 class nn {
+    fn linear(in_features, out_features) {
+        return LinearLayer.create(in_features, out_features)
+    }
+
     fn Linear(in_features, out_features) {
         return LinearLayer.create(in_features, out_features)
+    }
+
+    fn sequential(layers_list) {
+        return Sequential.create(layers_list)
     }
 
     fn Sequential(layers_list) {
         return Sequential.create(layers_list)
     }
 
+    fn mse_loss(pred, target) {
+        return MSELoss.forward(pred, target)
+    }
+
+    fn mse_loss_forward(pred, target) {
+        return MSELoss.forward(pred, target)
+    }
+
     fn MSELoss_forward(pred, target) {
         return MSELoss.forward(pred, target)
+    }
+
+    fn mse_loss_backward(pred, target) {
+        return MSELoss.backward(pred, target)
     }
 
     fn MSELoss_backward(pred, target) {
@@ -337,50 +359,43 @@ class nn {
 }
 
 // --------------------------------------------------------------------------
-// Stochastic Gradient Descent Optimizer (optim.SGD)
+// Stochastic Gradient Descent Optimizer (optim.sgd)
 // --------------------------------------------------------------------------
 class SGD {
-    fn create(params_list, lr) {
-        return {
-            "params": params_list,
+    fn create(model, lr) {
+        let obj = {
+            "model": model,
             "lr": lr
         }
+        return obj
     }
 
     fn step(opt) {
-        let params = opt["params"]
+        let m = opt["model"]
         let lr = opt["lr"]
-        let n = params.len()
+        let layers = m["layers"]
+        let n = m["num_layers"]
         let i = 0
         while i < n {
-            let item = params[i]
-            let layer = item["layer"]
-            let is_bias = item["is_bias"]
-            if is_bias == 0.0 {
-                let w = layer["weights"]
-                let gw = layer["grad_w"]
-                if gw != 0 {
-                    TensorMath.apply_grad(w, gw, lr)
-                }
-            } else {
-                let b = layer["bias"]
-                let gb = layer["grad_b"]
-                if gb != 0 {
-                    TensorMath.apply_grad(b, gb, lr)
-                }
-            }
+            let layer = layers[i]
+            let w = layer["weights"]
+            let gw = layer["grad_w"]
+            TensorMath.apply_grad(w, gw, lr)
+            let b = layer["bias"]
+            let gb = layer["grad_b"]
+            TensorMath.apply_grad(b, gb, lr)
             i = i + 1
         }
         return 1.0
     }
 
     fn zero_grad(opt) {
-        let params = opt["params"]
-        let n = params.len()
+        let m = opt["model"]
+        let layers = m["layers"]
+        let n = m["num_layers"]
         let i = 0
         while i < n {
-            let item = params[i]
-            let layer = item["layer"]
+            let layer = layers[i]
             layer["grad_w"] = 0
             layer["grad_b"] = 0
             i = i + 1
@@ -393,8 +408,12 @@ class SGD {
 // Top-Level Optimizer Facade (optim)
 // --------------------------------------------------------------------------
 class optim {
-    fn SGD(params_list, lr) {
-        return SGD.create(params_list, lr)
+    fn sgd(model, lr) {
+        return SGD.create(model, lr)
+    }
+
+    fn SGD(model, lr) {
+        return SGD.create(model, lr)
     }
 
     fn step(opt) {

@@ -44,7 +44,10 @@ $tests = @(
     "tests/nx/test_limits_recursion.nx",
     "tests/nx/test_limits_literals.nx",
     "tests/nx/test_limits_class.nx",
-    "tests/nx/test_limits_gpu.nx"
+    "tests/nx/test_limits_gpu.nx",
+    "tests/nx/test_stdtensor.nx",
+    "tests/nx/test_stddata.nx",
+    "tests/nx/test_stdtorch.nx"
 )
 
 $passed = 0

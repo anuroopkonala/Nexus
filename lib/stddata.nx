@@ -193,7 +193,7 @@ class Series {
         return s["data"]
     }
 
-    fn len(s) {
+    fn size(s) {
         let arr = s["data"]
         return arr.len()
     }
@@ -225,7 +225,7 @@ class Series {
         let arr = s["data"]
         let n = arr.len()
         if n == 0 { return 0.0 }
-        return Series.sum(s) / to_string(n)
+        return Series.sum(s) / n
     }
 
     fn min(s) {
@@ -257,7 +257,7 @@ class Series {
     fn to_tensor(s) {
         let arr = s["data"]
         let n = arr.len()
-        return NDArray.from_array([1.0, to_string(n)], arr)
+        return NDArray.from_array([1.0, n], arr)
     }
 }
 
@@ -380,7 +380,7 @@ class DataFrame {
                     let cn = col_names[ci]
                     let target_arr = filtered_dict[cn]
                     let src_arr = cols[cn]
-                    target_arr.push(src_arr[r])
+                    filtered_dict[cn] = target_arr.push(src_arr[r])
                     ci = ci + 1
                 }
             }
@@ -398,7 +398,7 @@ class DataFrame {
         while c < num_cols {
             let cname = col_names[c]
             let s = Series.create(cname, cols[cname])
-            let cnt = Series.len(s)
+            let cnt = Series.size(s)
             let mean_val = Series.mean(s)
             let min_val = Series.min(s)
             let max_val = Series.max(s)
@@ -435,12 +435,12 @@ class DataFrame {
             out_str = out_str + row_str + "\n"
             r = r + 1
         }
-        File.write_all(filepath, out_str)
+        File.write_text(filepath, out_str)
         return 1.0
     }
 
     fn read_csv(filepath) {
-        let content = File.read_all(filepath)
+        let content = File.read_text(filepath)
         let lines = content.split("\n")
         let total_lines = lines.len()
         if total_lines == 0 {
@@ -470,7 +470,7 @@ class DataFrame {
                         let raw_val = cells[col_idx]
                         let num_val = gpu_dispatch(65.0, [raw_val])
                         let col_arr = cols_dict[cname]
-                        col_arr.push(num_val)
+                        cols_dict[cname] = col_arr.push(num_val)
                         col_idx = col_idx + 1
                     }
                 }
@@ -491,12 +491,12 @@ class DataFrame {
             while c < num_cols {
                 let cname = selected_cols[c]
                 let col_data = cols[cname]
-                flat_arr.push(col_data[r])
+                flat_arr = flat_arr.push(col_data[r])
                 c = c + 1
             }
             r = r + 1
         }
-        return NDArray.from_array([to_string(num_rows), to_string(num_cols)], flat_arr)
+        return NDArray.from_array([num_rows, num_cols], flat_arr)
     }
 
     fn row(df, idx) {
@@ -519,11 +519,11 @@ class DataFrame {
 // Top-Level Pandas Facade (pd)
 // --------------------------------------------------------------------------
 class pd {
-    fn DataFrame(col_names, columns_dict) {
+    fn dataframe(col_names, columns_dict) {
         return DataFrame.create(col_names, columns_dict)
     }
 
-    fn Series(name, data_array) {
+    fn series(name, data_array) {
         return Series.create(name, data_array)
     }
 
@@ -550,16 +550,17 @@ class pd {
             let i1 = 0
             let n1 = arr1.len()
             while i1 < n1 {
-                target_arr.push(arr1[i1])
+                target_arr = target_arr.push(arr1[i1])
                 i1 = i1 + 1
             }
             let arr2 = cols2[cn]
             let i2 = 0
             let n2 = arr2.len()
             while i2 < n2 {
-                target_arr.push(arr2[i2])
+                target_arr = target_arr.push(arr2[i2])
                 i2 = i2 + 1
             }
+            new_dict[cn] = target_arr
             c = c + 1
         }
         return DataFrame.create(col_names, new_dict)

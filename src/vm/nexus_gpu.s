@@ -5640,7 +5640,7 @@ asm_gpu_dispatch:
     # Generates an identity matrix Tensor [N, N]
     # --------------------------------------------------------------------------
     cmp r14, 64
-    jne .check_op_fallback
+    jne .check_op_65
     test r15, r15
     jz .eye_fail
 
@@ -5742,6 +5742,579 @@ asm_gpu_dispatch:
     jmp .dispatch_done
 
 .eye_fail:
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    xorpd xmm0, xmm0
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.check_op_65:
+    # --------------------------------------------------------------------------
+    # OP 65: GPU_PARSE_FLOAT (args[0] = string or scalar)
+    # --------------------------------------------------------------------------
+    cmp r14, 65
+    jne .check_op_66
+    test r15, r15
+    jz .parse_fail
+    mov rcx, r15
+    call asm_gpu_is_nexus_array
+    jne .parse_from_scalar
+    mov rsi, [r15]          # string ptr
+    jmp .parse_check_val
+.parse_from_scalar:
+    mov rdx, [rbp - 24]
+    mov rsi, [r13 + rdx * 8]
+.parse_check_val:
+    test rsi, rsi
+    jz .parse_fail
+    mov rcx, rsi
+.parse_skip_ws:
+    mov al, byte ptr [rcx]
+    cmp al, ' '
+    je 1f
+    cmp al, 9          # '\t'
+    je 1f
+    cmp al, 13         # '\r'
+    je 1f
+    cmp al, 10         # '\n'
+    je 1f
+    cmp al, 'n'        # skip 'n' from literal \n split
+    je 1f
+    jmp .parse_do_atof
+1:
+    inc rcx
+    jmp .parse_skip_ws
+.parse_do_atof:
+    call atof
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+.parse_fail:
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    xorpd xmm0, xmm0
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.check_op_66:
+    # --------------------------------------------------------------------------
+    # OP 66: GPU_TENSOR_LINSPACE (args = [start, stop, num])
+    # --------------------------------------------------------------------------
+    cmp r14, 66
+    jne .check_op_67
+    test r15, r15
+    jz .linspace_fail
+    mov rcx, r15
+    call asm_gpu_is_nexus_array
+    jne .linspace_fail
+
+    movsd xmm3, [r15]       # start
+    movsd xmm5, [r15 + 8]   # stop
+    movsd xmm0, [r15 + 16]  # num
+    cvttsd2si rbx, xmm0     # rbx = num
+    test rbx, rbx
+    jle .linspace_fail
+    cmp rbx, 10000000
+    jg .linspace_fail
+
+    mov [rbp - 56], rbx     # num
+    movsd [rbp - 64], xmm3  # start
+    movsd [rbp - 72], xmm5  # stop
+
+    # step = (num > 1) ? (stop - start) / (num - 1) : 0.0
+    xorps xmm4, xmm4
+    cmp rbx, 1
+    jle 1f
+    mov rax, rbx
+    dec rax
+    cvtsi2sd xmm1, rax
+    movsd xmm0, xmm5
+    subsd xmm0, xmm3
+    divsd xmm0, xmm1
+    movaps xmm4, xmm0
+1:
+    movsd [rbp - 88], xmm4  # step
+
+    # Allocate host buffer
+    mov rcx, rbx
+    shl rcx, 2
+    mov [rbp - 80], rcx     # size_bytes
+    call malloc
+    test rax, rax
+    jz .linspace_fail
+    mov rdi, rax
+
+    # Fill
+    mov rbx, [rbp - 56]
+    movsd xmm3, [rbp - 64]
+    movsd xmm4, [rbp - 88]
+    xor ecx, ecx
+.linspace_fill_lp:
+    cmp rcx, rbx
+    jge .linspace_fill_dn
+    cvtsd2ss xmm0, xmm3
+    movss [rdi + rcx * 4], xmm0
+    addsd xmm3, xmm4
+    inc rcx
+    jmp .linspace_fill_lp
+.linspace_fill_dn:
+
+    # If CUDA, upload
+    xor r14d, r14d
+    cmp dword ptr [rip + gpu_has_cuda], 1
+    jne .linspace_register
+
+    lea rax, [rbp - 48]
+    mov rcx, rax
+    mov rdx, [rbp - 80]
+    call asm_gpu_alloc_vram
+    test eax, eax
+    jnz .linspace_register
+
+    mov rsi, [rbp - 48]
+    mov rcx, rsi
+    mov rdx, rdi
+    mov r8, [rbp - 80]
+    call [rip + gpu_p_cuMemcpyHtoD]
+    test eax, eax
+    jnz .linspace_register
+
+    mov rcx, rdi
+    call free
+    mov rdi, rsi
+    mov r14d, 1
+
+.linspace_register:
+    mov rcx, 2
+    mov rdx, rdi
+    mov r8, [rbp - 80]
+    mov r9, r14
+    mov dword ptr [rsp + 32], 1
+    mov r10d, [rbp - 56]
+    mov [rsp + 40], r10d
+    call asm_gpu_register_handle
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.linspace_fail:
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    xorpd xmm0, xmm0
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.check_op_67:
+    # --------------------------------------------------------------------------
+    # OP 67: GPU_TENSOR_RANDN (args = [rows, cols, seed])
+    # --------------------------------------------------------------------------
+    cmp r14, 67
+    jne .check_op_68
+    test r15, r15
+    jz .randn_fail
+    mov rcx, r15
+    call asm_gpu_is_nexus_array
+    jne .randn_fail
+
+    movsd xmm0, [r15]       # rows
+    cvttsd2si r10, xmm0
+    movsd xmm1, [r15 + 8]   # cols
+    cvttsd2si r11, xmm1
+    test r10, r10
+    jle .randn_fail
+    test r11, r11
+    jle .randn_fail
+
+    mov [rbp - 56], r10d    # dim0
+    mov [rbp - 60], r11d    # dim1
+
+    mov rax, r10
+    imul rax, r11
+    mov [rbp - 68], rax     # total
+    shl rax, 2
+    mov [rbp - 80], rax     # size_bytes
+
+    # Allocate host buffer
+    mov rcx, rax
+    call malloc
+    test rax, rax
+    jz .randn_fail
+    mov rdi, rax
+
+    # Seed
+    mov r9, 0x123456789ABCDEF1
+    movsd xmm0, [r15 - 16]
+    cvttsd2si rcx, xmm0
+    cmp rcx, 2
+    jle 1f
+    movsd xmm0, [r15 + 16]
+    cvttsd2si r9, xmm0
+1:
+    test r9, r9
+    jnz 2f
+    mov r9, 0x987654321
+2:
+    # Fill with pseudo-random normal weights (mean 0, std ~ 0.1)
+    mov r8, [rbp - 68]      # count
+    xor ecx, ecx            # i = 0
+    mov r11, 0x5851F42D4C957F2D
+    mov r12, 0x14057B7EF767814F
+.randn_fill_lp:
+    cmp rcx, r8
+    jge .randn_fill_dn
+
+    # Step LCG 4 times and sum lower 16 bits
+    mov rax, r9
+    imul rax, r11
+    add rax, r12
+    mov r9, rax
+    mov edx, eax
+    and edx, 0xFFFF
+
+    mov rax, r9
+    imul rax, r11
+    add rax, r12
+    mov r9, rax
+    mov ebx, eax
+    and ebx, 0xFFFF
+    add edx, ebx
+
+    mov rax, r9
+    imul rax, r11
+    add rax, r12
+    mov r9, rax
+    mov ebx, eax
+    and ebx, 0xFFFF
+    add edx, ebx
+
+    mov rax, r9
+    imul rax, r11
+    add rax, r12
+    mov r9, rax
+    mov ebx, eax
+    and ebx, 0xFFFF
+    add edx, ebx
+
+    # Center: sub 131070
+    sub edx, 131070
+    cvtsi2ss xmm0, edx
+    mov eax, 0x354CC8D7     # 7.62939e-7f
+    movd xmm1, eax
+    mulss xmm0, xmm1
+    movss [rdi + rcx * 4], xmm0
+
+    inc rcx
+    jmp .randn_fill_lp
+.randn_fill_dn:
+
+    # Upload if CUDA
+    xor r14d, r14d
+    cmp dword ptr [rip + gpu_has_cuda], 1
+    jne .randn_register
+
+    lea rax, [rbp - 48]
+    mov rcx, rax
+    mov rdx, [rbp - 80]
+    call asm_gpu_alloc_vram
+    test eax, eax
+    jnz .randn_register
+
+    mov rsi, [rbp - 48]
+    mov rcx, rsi
+    mov rdx, rdi
+    mov r8, [rbp - 80]
+    call [rip + gpu_p_cuMemcpyHtoD]
+    test eax, eax
+    jnz .randn_register
+
+    mov rcx, rdi
+    call free
+    mov rdi, rsi
+    mov r14d, 1
+
+.randn_register:
+    mov rcx, 2
+    mov rdx, rdi
+    mov r8, [rbp - 80]
+    mov r9, r14
+    mov r10d, [rbp - 56]
+    mov [rsp + 32], r10d
+    mov r11d, [rbp - 60]
+    mov [rsp + 40], r11d
+    call asm_gpu_register_handle
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.randn_fail:
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    xorpd xmm0, xmm0
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.check_op_68:
+    # --------------------------------------------------------------------------
+    # OP 68: GPU_TENSOR_CLIP (args = [tensor, min_val, max_val])
+    # --------------------------------------------------------------------------
+    cmp r14, 68
+    jne .check_op_69
+    test r15, r15
+    jz .clip_fail
+    mov rcx, r15
+    call asm_gpu_is_nexus_array
+    jne .clip_fail
+
+    movsd xmm0, [r15]       # handle
+    cvttsd2si rcx, xmm0
+    call asm_gpu_lookup_handle
+    test rax, rax
+    jz .clip_fail
+    mov rsi, rax            # rsi = src handle
+
+    movsd xmm1, [r15 + 8]   # min_val
+    cvtsd2ss xmm3, xmm1
+    movsd xmm2, [r15 + 16]  # max_val
+    cvtsd2ss xmm4, xmm2
+
+    mov [rbp - 56], rsi     # save src handle
+    movss [rbp - 64], xmm3  # min_val float
+    movss [rbp - 68], xmm4  # max_val float
+
+    mov rbx, [rsi + 24]     # size_bytes
+    mov [rbp - 80], rbx
+
+    # Allocate host buffer
+    mov rcx, rbx
+    call malloc
+    test rax, rax
+    jz .clip_fail
+    mov rdi, rax
+
+    # Copy src data to host buffer
+    mov rsi, [rbp - 56]
+    cmp dword ptr [rsi + 32], 1
+    jne 1f
+    # From CUDA VRAM
+    mov rcx, rdi
+    mov rdx, [rsi + 16]
+    mov r8, [rbp - 80]
+    call [rip + gpu_p_cuMemcpyDtoH]
+    test eax, eax
+    jnz .clip_fail
+    jmp 2f
+1:
+    # From Host RAM
+    mov rcx, rdi
+    mov rdx, [rsi + 16]
+    mov r8, [rbp - 80]
+    call memcpy
+2:
+    # Apply clamp: min(max(val, min_val), max_val)
+    mov r8, [rbp - 80]
+    shr r8, 2               # element count
+    movss xmm3, [rbp - 64]  # min
+    movss xmm4, [rbp - 68]  # max
+    xor ecx, ecx
+.clip_lp:
+    cmp rcx, r8
+    jge .clip_dn
+    movss xmm0, [rdi + rcx * 4]
+    maxss xmm0, xmm3
+    minss xmm0, xmm4
+    movss [rdi + rcx * 4], xmm0
+    inc rcx
+    jmp .clip_lp
+.clip_dn:
+
+    # Upload if CUDA
+    mov rsi, [rbp - 56]
+    xor r14d, r14d
+    cmp dword ptr [rsi + 32], 1
+    jne .clip_register
+
+    lea rax, [rbp - 48]
+    mov rcx, rax
+    mov rdx, [rbp - 80]
+    call asm_gpu_alloc_vram
+    test eax, eax
+    jnz .clip_register
+
+    mov rbx, [rbp - 48]
+    mov rcx, rbx
+    mov rdx, rdi
+    mov r8, [rbp - 80]
+    call [rip + gpu_p_cuMemcpyHtoD]
+    test eax, eax
+    jnz .clip_register
+
+    mov rcx, rdi
+    call free
+    mov rdi, rbx
+    mov r14d, 1
+
+.clip_register:
+    mov rsi, [rbp - 56]
+    mov rcx, 2
+    mov rdx, rdi
+    mov r8, [rbp - 80]
+    mov r9, r14
+    mov r10d, [rsi + 40]
+    mov [rsp + 32], r10d
+    mov r11d, [rsi + 44]
+    mov [rsp + 40], r11d
+    call asm_gpu_register_handle
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.clip_fail:
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    xorpd xmm0, xmm0
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.check_op_69:
+    # --------------------------------------------------------------------------
+    # OP 69: GPU_APPLY_GRAD (args = [param_tensor, grad_tensor, lr])
+    # In-place parameter update: param[i] -= lr * grad[i]
+    # --------------------------------------------------------------------------
+    cmp r14, 69
+    jne .check_op_fallback
+    test r15, r15
+    jz .grad_fail
+    mov rcx, r15
+    call asm_gpu_is_nexus_array
+    jne .grad_fail
+
+    movsd xmm0, [r15]       # param_handle
+    cvttsd2si rcx, xmm0
+    call asm_gpu_lookup_handle
+    test rax, rax
+    jz .grad_fail
+    mov rsi, rax            # rsi = param handle
+
+    movsd xmm0, [r15 + 8]   # grad_handle
+    cvttsd2si rcx, xmm0
+    call asm_gpu_lookup_handle
+    test rax, rax
+    jz .grad_fail
+    mov rbx, rax            # rbx = grad handle
+
+    movsd xmm1, [r15 + 16]  # lr
+    cvtsd2ss xmm2, xmm1
+    movss [rbp - 64], xmm2  # lr float
+
+    mov r8, [rsi + 24]      # size_bytes
+    mov [rbp - 72], r8
+    mov [rbp - 80], rsi     # param
+    mov [rbp - 88], rbx     # grad
+
+    # Allocate host buffers for param and grad
+    mov rcx, r8
+    call malloc
+    test rax, rax
+    jz .grad_fail
+    mov rdi, rax            # rdi = host param buffer
+    mov [rbp - 96], rdi
+
+    mov rcx, [rbp - 72]
+    call malloc
+    test rax, rax
+    jz .grad_fail_free_p
+    mov r12, rax            # r12 = host grad buffer
+    mov [rbp - 104], r12
+
+    # Download param
+    mov rsi, [rbp - 80]
+    cmp dword ptr [rsi + 32], 1
+    jne 1f
+    mov rcx, [rbp - 96]
+    mov rdx, [rsi + 16]
+    mov r8, [rbp - 72]
+    call [rip + gpu_p_cuMemcpyDtoH]
+    jmp 2f
+1:
+    mov rcx, [rbp - 96]
+    mov rdx, [rsi + 16]
+    mov r8, [rbp - 72]
+    call memcpy
+2:
+    # Download grad
+    mov rbx, [rbp - 88]
+    cmp dword ptr [rbx + 32], 1
+    jne 3f
+    mov rcx, [rbp - 104]
+    mov rdx, [rbx + 16]
+    mov r8, [rbp - 72]
+    call [rip + gpu_p_cuMemcpyDtoH]
+    jmp 4f
+3:
+    mov rcx, [rbp - 104]
+    mov rdx, [rbx + 16]
+    mov r8, [rbp - 72]
+    call memcpy
+4:
+    # Vector update: param[i] -= lr * grad[i]
+    mov r8, [rbp - 72]
+    shr r8, 2               # element count
+    mov rdi, [rbp - 96]     # param ptr
+    mov r12, [rbp - 104]    # grad ptr
+    movss xmm2, [rbp - 64]  # lr
+    xor ecx, ecx
+.grad_lp:
+    cmp rcx, r8
+    jge .grad_dn
+    movss xmm0, [rdi + rcx * 4]
+    movss xmm1, [r12 + rcx * 4]
+    mulss xmm1, xmm2
+    subss xmm0, xmm1
+    movss [rdi + rcx * 4], xmm0
+    inc rcx
+    jmp .grad_lp
+.grad_dn:
+
+    # Upload updated param back to VRAM or Host RAM
+    mov rsi, [rbp - 80]
+    cmp dword ptr [rsi + 32], 1
+    jne 5f
+    mov rcx, [rsi + 16]     # dst VRAM
+    mov rdx, [rbp - 96]     # src host
+    mov r8, [rbp - 72]
+    call [rip + gpu_p_cuMemcpyHtoD]
+    jmp 6f
+5:
+    mov rcx, [rsi + 16]     # dst host
+    mov rdx, [rbp - 96]     # src host
+    mov r8, [rbp - 72]
+    call memcpy
+6:
+    # Free temporary staging buffers
+    mov rcx, [rbp - 104]
+    call free
+    mov rcx, [rbp - 96]
+    call free
+
+    # Return 1.0 (success)
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    mov rax, 1
+    cvtsi2sd xmm0, rax
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.grad_fail_free_p:
+    mov rcx, [rbp - 96]
+    call free
+.grad_fail:
     mov r13, [rbp - 32]
     mov rdx, [rbp - 8]
     xorpd xmm0, xmm0
