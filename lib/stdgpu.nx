@@ -40,6 +40,14 @@ class GPU {
     fn time_ms() {
         return gpu_dispatch(30.0, [])
     }
+
+    fn backend_id() {
+        return gpu_dispatch(74.0, [0.0])
+    }
+
+    fn backend() {
+        return gpu_dispatch(74.0, [1.0])
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -274,6 +282,27 @@ class NN {
     fn maxpool2d(tensor_x, pool_size, stride) {
         return gpu_dispatch(27.0, [tensor_x, pool_size, stride])
     }
+
+    fn flash_attention(q, k, v, is_causal) {
+        return gpu_dispatch(70.0, [q, k, v, is_causal])
+    }
+
+    fn rope(x, pos_offset, theta_base) {
+        return gpu_dispatch(71.0, [x, pos_offset, theta_base])
+    }
+}
+
+// --------------------------------------------------------------------------
+// Quantized Weight & Linear Algebra Acceleration
+// --------------------------------------------------------------------------
+class Quant {
+    fn quantize(tensor, format) {
+        return gpu_dispatch(72.0, [tensor, format])
+    }
+
+    fn gemm_quantized(act, w_quant, format, m, k, n) {
+        return gpu_dispatch(73.0, [act, w_quant, format, m, k, n])
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -304,9 +333,15 @@ class CV {
 class stdgpu {
     fn init() { return GPU.init() }
     fn sync() { return GPU.sync() }
+    fn backend_id() { return GPU.backend_id() }
+    fn backend() { return GPU.backend() }
     fn memory_info() { return GPUMemory.info() }
     fn alloc(size_bytes) { return GPUMemory.alloc(size_bytes) }
     fn free(handle) { return GPUMemory.free(handle) }
     fn alloc_managed(size_bytes) { return GPUMemory.alloc_managed(size_bytes) }
     fn alloc_pinned(size_bytes) { return GPUMemory.alloc_pinned(size_bytes) }
+    fn flash_attention(q, k, v, is_causal) { return NN.flash_attention(q, k, v, is_causal) }
+    fn rope(x, pos_offset, theta_base) { return NN.rope(x, pos_offset, theta_base) }
+    fn quantize(tensor, format) { return Quant.quantize(tensor, format) }
+    fn gemm_quantized(act, w_quant, format, m, k, n) { return Quant.gemm_quantized(act, w_quant, format, m, k, n) }
 }

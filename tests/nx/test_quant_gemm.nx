@@ -1,0 +1,72 @@
+import stdlib
+
+class TensorOps {
+    fn create(c_shape, c_val) { return gpu_dispatch(12.0, [c_shape, c_val]) }
+    fn from_array(fa_shape, fa_arr) {
+        let fa_h = gpu_dispatch(12.0, [fa_shape, 0.0])
+        gpu_dispatch(9.0, [fa_h, fa_arr])
+        return fa_h
+    }
+    fn to_array(ta_h) { return gpu_dispatch(15.0, [ta_h]) }
+    fn shape(sh_h) { return gpu_dispatch(13.0, [sh_h]) }
+    fn free(fr_h) { return gpu_dispatch(8.0, [fr_h]) }
+}
+
+fn main() {
+    System.print_str("Testing Quantized GEMM...")
+    let backend = gpu_dispatch(74.0, [0.0])
+    System.print_str("Backend ID: " + to_string(backend))
+    let a = TensorOps.create([1, 32], 1.0)
+    System.print_str("A handle: " + to_string(a))
+
+    let w = TensorOps.create([32, 32], 0.5)
+    System.print_str("W handle: " + to_string(w))
+
+    let w_sh = TensorOps.shape(w)
+    System.print_str("W shape: [" + to_string(w_sh[0]) + ", " + to_string(w_sh[1]) + "]")
+
+    // Quantize to Q8_0
+    System.print_str("Quantizing W to Q8_0...")
+    let w_q8 = gpu_dispatch(72.0, [w, 1.0])
+    System.print_str("W_q8 handle: " + to_string(w_q8))
+
+    // Run Quantized GEMM: [A, W_q8, format=1.0, M=1, K=32, N=32]
+    System.print_str("Launching k_gemm_q8_0...")
+    let c = gpu_dispatch(73.0, [a, w_q8, 1.0, 1.0, 32.0, 32.0])
+    System.print_str("C handle: " + to_string(c))
+
+    let c_sh = TensorOps.shape(c)
+    System.print_str("C shape: [" + to_string(c_sh[0]) + ", " + to_string(c_sh[1]) + "]")
+
+    let c_arr = TensorOps.to_array(c)
+    System.print_str("C[0, 0]: " + to_string(c_arr[0]) + " (expected: 16.0)")
+
+    if c_arr[0] >= 15.8 && c_arr[0] <= 16.2 {
+        System.print_str("PASS: Q8_0 GEMM computed accurate result!")
+    } else {
+        System.print_str("FAIL: Q8_0 value mismatch")
+    }
+
+    // Now test Q4_0
+    System.print_str("Quantizing W to Q4_0...")
+    let w_q4 = gpu_dispatch(72.0, [w, 2.0])
+    System.print_str("Launching k_gemm_q4_0...")
+    let c4 = gpu_dispatch(73.0, [a, w_q4, 2.0, 1.0, 32.0, 32.0])
+    let c4_arr = TensorOps.to_array(c4)
+    System.print_str("C4[0, 0]: " + to_string(c4_arr[0]) + " (expected: ~16.0)")
+
+    if c4_arr[0] >= 14.0 && c4_arr[0] <= 18.0 {
+        System.print_str("PASS: Q4_0 GEMM computed accurate result!")
+    } else {
+        System.print_str("FAIL: Q4_0 value mismatch")
+    }
+
+    TensorOps.free(a)
+    TensorOps.free(w)
+    TensorOps.free(w_q8)
+    TensorOps.free(w_q4)
+    TensorOps.free(c)
+    TensorOps.free(c4)
+}
+
+main()

@@ -173,6 +173,30 @@ class torch {
     fn device_name() {
         return gpu_dispatch(2.0, [])
     }
+
+    fn flash_attention(q, k, v, is_causal) {
+        return gpu_dispatch(70.0, [q, k, v, is_causal])
+    }
+
+    fn rope(x, pos_offset, theta_base) {
+        return gpu_dispatch(71.0, [x, pos_offset, theta_base])
+    }
+
+    fn quantize(tensor, format) {
+        return gpu_dispatch(72.0, [tensor, format])
+    }
+
+    fn gemm_quantized(act, w_quant, format, m, k, n) {
+        return gpu_dispatch(73.0, [act, w_quant, format, m, k, n])
+    }
+
+    fn backend_id() {
+        return gpu_dispatch(74.0, [0.0])
+    }
+
+    fn backend() {
+        return gpu_dispatch(74.0, [1.0])
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -422,5 +446,96 @@ class optim {
 
     fn zero_grad(opt) {
         return SGD.zero_grad(opt)
+    }
+}
+
+// --------------------------------------------------------------------------
+// Quantized Linear Layer (nn.QuantLinear)
+// --------------------------------------------------------------------------
+class QuantLinear {
+    fn create(in_features, out_features, format_id, init_val) {
+        let w_fp32 = TensorOps.create([out_features, in_features], init_val)
+        let w_quant = gpu_dispatch(72.0, [w_fp32, format_id])
+        let res = {}
+        res["w_quant"] = w_quant
+        res["w_fp32"] = w_fp32
+        res["in_features"] = in_features
+        res["out_features"] = out_features
+        res["format"] = format_id
+        return res
+    }
+
+    fn forward(layer, x) {
+        let x_sh = TensorOps.shape(x)
+        let m = x_sh[0]
+        let k_dim = x_sh[1]
+        let n = layer["out_features"]
+        let w_q = layer["w_quant"]
+        let fmt = layer["format"]
+        return gpu_dispatch(73.0, [x, w_q, fmt, m, k_dim, n])
+    }
+
+    fn free(layer) {
+        TensorOps.free(layer["w_quant"])
+        TensorOps.free(layer["w_fp32"])
+    }
+}
+
+// --------------------------------------------------------------------------
+// GGUF v3 Model Format Parser (torch.gguf)
+// --------------------------------------------------------------------------
+class GGUF {
+    fn TYPE_F32() { return 0.0 }
+    fn TYPE_F16() { return 1.0 }
+    fn TYPE_Q4_0() { return 2.0 }
+    fn TYPE_Q8_0() { return 8.0 }
+
+    fn parse(path) {
+        let content = File.read_text(path)
+        let lines = content.split("\n")
+        let magic = lines[0]
+        if magic != "GGUF" {
+            return {"error": "Invalid GGUF magic"}
+        }
+
+        let ver = 3.0
+        let meta = {}
+        let tensors = {}
+        let in_tensors = 0.0
+
+        let i = 2
+        while i < lines.len() {
+            let line = lines[i]
+            if line == "---TENSORS---" {
+                in_tensors = 1.0
+            } else {
+                if in_tensors == 0.0 {
+                    let kv = line.split("=")
+                    if kv.len() == 2 {
+                        meta[kv[0]] = kv[1]
+                    }
+                } else {
+                    let parts = line.split(":")
+                    if parts.len() == 3 {
+                        let t_name = parts[0]
+                        let t_shape = parts[1]
+                        let t_type = parts[2]
+                        let t_obj = {}
+                        t_obj["name"] = t_name
+                        t_obj["shape"] = t_shape
+                        t_obj["type"] = t_type
+                        tensors[t_name] = t_obj
+                    }
+                }
+            }
+            i = i + 1
+        }
+
+        let res = {}
+        res["magic"] = magic
+        res["version"] = ver
+        res["metadata"] = meta
+        res["tensors"] = tensors
+        return res
     }
 }

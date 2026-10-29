@@ -297,6 +297,26 @@ class torch {
         return TensorNN.softmax(a)
     }
 
+    fn flash_attention(q, k, v, is_causal) {
+        return gpu_dispatch(70.0, [q, k, v, is_causal])
+    }
+
+    fn rope(x, pos_offset, theta_base) {
+        return gpu_dispatch(71.0, [x, pos_offset, theta_base])
+    }
+
+    fn quantize(tensor, format) {
+        return gpu_dispatch(72.0, [tensor, format])
+    }
+
+    fn backend() {
+        return gpu_dispatch(74.0, [1.0])
+    }
+
+    fn backend_id() {
+        return gpu_dispatch(74.0, [0.0])
+    }
+
     fn cuda_is_available() {
         return gpu_dispatch(5.0, [])
     }

@@ -85,6 +85,14 @@ gpu_kname_maxpool2d:   .asciz "k_maxpool2d"
 gpu_kname_blur:        .asciz "k_gaussian_blur"
 gpu_kname_sobel:       .asciz "k_sobel"
 gpu_kname_resize:      .asciz "k_resize_bilinear"
+gpu_kname_flash_attention: .asciz "k_flash_attention"
+gpu_kname_rope:            .asciz "k_rope"
+gpu_kname_gemm_q8_0:       .asciz "k_gemm_q8_0"
+gpu_kname_gemm_q4_0:       .asciz "k_gemm_q4_0"
+
+gpu_str_amdhip:            .asciz "amdhip64.dll"
+gpu_backend_cuda_name:     .asciz "NVIDIA CUDA Hardware Driver (nvcuda.dll)"
+gpu_backend_rocm_name:     .asciz "AMD ROCm / HIP Hardware Driver (amdhip64.dll)"
 
 gpu_fallback_name:     .asciz "Nexus Baremetal SIMD AVX2 Engine"
 
@@ -149,6 +157,11 @@ gpu_fn_maxpool2d:   .quad 0
 gpu_fn_blur:        .quad 0
 gpu_fn_sobel:       .quad 0
 gpu_fn_resize:      .quad 0
+gpu_fn_flash_attention: .quad 0
+gpu_fn_rope:            .quad 0
+gpu_fn_gemm_q8_0:       .quad 0
+gpu_fn_gemm_q4_0:       .quad 0
+gpu_backend_id:         .long 0
 
 # Engine State
 gpu_is_inited:      .long 0
@@ -201,7 +214,11 @@ gpu_ptx_code:
 .ascii ".visible .entry k_maxpool2d(.param .u64 d_in, .param .u64 d_out, .param .u32 H, .param .u32 W, .param .u32 pool_size, .param .u32 stride, .param .u32 outH, .param .u32 outW) {\n.reg .pred %p<6>;\n.reg .b32 %r<20>;\n.reg .b64 %rd<8>;\n.reg .f32 %f<3>;\nmov.u32 %r0, %ctaid.y;\nmov.u32 %r1, %ntid.y;\nmov.u32 %r2, %tid.y;\nmad.lo.u32 %r3, %r0, %r1, %r2;\nmov.u32 %r4, %ctaid.x;\nmov.u32 %r5, %ntid.x;\nmov.u32 %r6, %tid.x;\nmad.lo.u32 %r7, %r4, %r5, %r6;\nld.param.u32 %r8, [outH];\nld.param.u32 %r9, [outW];\nsetp.ge.u32 %p0, %r3, %r8;\nsetp.ge.u32 %p1, %r7, %r9;\nor.pred %p2, %p0, %p1;\n@%p2 bra DONE_POOL;\nmov.f32 %f0, 0fFF7FFFFF;\nld.param.u32 %r10, [H];\nld.param.u32 %r11, [W];\nld.param.u32 %r12, [pool_size];\nld.param.u32 %r13, [stride];\nld.param.u64 %rd2, [d_in];\nmov.u32 %r14, 0;\nPOOL_PH_LP:\nsetp.ge.u32 %p0, %r14, %r12;\n@%p0 bra POOL_STORE;\nmad.lo.u32 %r15, %r3, %r13, %r14;\nsetp.ge.u32 %p3, %r15, %r10;\nmov.u32 %r16, 0;\nPOOL_PW_LP:\nsetp.ge.u32 %p0, %r16, %r12;\n@%p0 bra POOL_PH_NXT;\n@%p3 bra POOL_PW_NXT;\nmad.lo.u32 %r17, %r7, %r13, %r16;\nsetp.ge.u32 %p4, %r17, %r11;\n@%p4 bra POOL_PW_NXT;\nmad.lo.u32 %r18, %r15, %r11, %r17;\nmul.wide.u32 %rd1, %r18, 4;\nadd.u64 %rd3, %rd2, %rd1;\nld.global.f32 %f1, [%rd3];\nmax.f32 %f0, %f0, %f1;\nPOOL_PW_NXT:\nadd.u32 %r16, %r16, 1;\nbra POOL_PW_LP;\nPOOL_PH_NXT:\nadd.u32 %r14, %r14, 1;\nbra POOL_PH_LP;\nPOOL_STORE:\nmad.lo.u32 %r19, %r3, %r9, %r7;\nmul.wide.u32 %rd4, %r19, 4;\nld.param.u64 %rd5, [d_out];\nadd.u64 %rd6, %rd5, %rd4;\nst.global.f32 [%rd6], %f0;\nDONE_POOL:\nret;\n}\n"
 .ascii ".visible .entry k_gaussian_blur(.param .u64 d_in, .param .u64 d_out, .param .u32 H, .param .u32 W) {\n.reg .pred %p<3>;\n.reg .b32 %r<16>;\n.reg .b64 %rd<8>;\n.reg .f32 %f<12>;\nmov.u32 %r0, %ctaid.y;\nmov.u32 %r1, %ntid.y;\nmov.u32 %r2, %tid.y;\nmad.lo.u32 %r3, %r0, %r1, %r2;\nmov.u32 %r4, %ctaid.x;\nmov.u32 %r5, %ntid.x;\nmov.u32 %r6, %tid.x;\nmad.lo.u32 %r7, %r4, %r5, %r6;\nld.param.u32 %r8, [H];\nld.param.u32 %r9, [W];\nsetp.ge.u32 %p0, %r3, %r8;\nsetp.ge.u32 %p1, %r7, %r9;\nor.pred %p2, %p0, %p1;\n@%p2 bra DONE_BLUR;\nsub.s32 %r10, %r3, 1;\nmax.s32 %r10, %r10, 0;\nadd.u32 %r11, %r3, 1;\nsub.u32 %r12, %r8, 1;\nmin.u32 %r11, %r11, %r12;\nsub.s32 %r13, %r7, 1;\nmax.s32 %r13, %r13, 0;\nadd.u32 %r14, %r7, 1;\nsub.u32 %r15, %r9, 1;\nmin.u32 %r14, %r14, %r15;\nld.param.u64 %rd1, [d_in];\nmad.lo.u32 %r0, %r10, %r9, %r13;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f1, [%rd3];\nmad.lo.u32 %r0, %r10, %r9, %r7;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f2, [%rd3];\nmad.lo.u32 %r0, %r10, %r9, %r14;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f3, [%rd3];\nmad.lo.u32 %r0, %r3, %r9, %r13;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f4, [%rd3];\nmad.lo.u32 %r0, %r3, %r9, %r7;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f5, [%rd3];\nmad.lo.u32 %r0, %r3, %r9, %r14;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f6, [%rd3];\nmad.lo.u32 %r0, %r11, %r9, %r13;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f7, [%rd3];\nmad.lo.u32 %r0, %r11, %r9, %r7;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f8, [%rd3];\nmad.lo.u32 %r0, %r11, %r9, %r14;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f9, [%rd3];\nadd.f32 %f0, %f1, %f3;\nadd.f32 %f0, %f0, %f7;\nadd.f32 %f0, %f0, %f9;\nadd.f32 %f10, %f2, %f4;\nadd.f32 %f10, %f10, %f6;\nadd.f32 %f10, %f10, %f8;\nfma.rn.f32 %f0, %f10, 0f40000000, %f0;\nfma.rn.f32 %f0, %f5, 0f40800000, %f0;\nmul.f32 %f0, %f0, 0f3D800000;\nmad.lo.u32 %r0, %r3, %r9, %r7;\nmul.wide.u32 %rd4, %r0, 4;\nld.param.u64 %rd5, [d_out];\nadd.u64 %rd6, %rd5, %rd4;\nst.global.f32 [%rd6], %f0;\nDONE_BLUR:\nret;\n}\n"
 .ascii ".visible .entry k_sobel(.param .u64 d_in, .param .u64 d_out, .param .u32 H, .param .u32 W) {\n.reg .pred %p<3>;\n.reg .b32 %r<16>;\n.reg .b64 %rd<8>;\n.reg .f32 %f<14>;\nmov.u32 %r0, %ctaid.y;\nmov.u32 %r1, %ntid.y;\nmov.u32 %r2, %tid.y;\nmad.lo.u32 %r3, %r0, %r1, %r2;\nmov.u32 %r4, %ctaid.x;\nmov.u32 %r5, %ntid.x;\nmov.u32 %r6, %tid.x;\nmad.lo.u32 %r7, %r4, %r5, %r6;\nld.param.u32 %r8, [H];\nld.param.u32 %r9, [W];\nsetp.ge.u32 %p0, %r3, %r8;\nsetp.ge.u32 %p1, %r7, %r9;\nor.pred %p2, %p0, %p1;\n@%p2 bra DONE_SOBEL;\nsub.s32 %r10, %r3, 1;\nmax.s32 %r10, %r10, 0;\nadd.u32 %r11, %r3, 1;\nsub.u32 %r12, %r8, 1;\nmin.u32 %r11, %r11, %r12;\nsub.s32 %r13, %r7, 1;\nmax.s32 %r13, %r13, 0;\nadd.u32 %r14, %r7, 1;\nsub.u32 %r15, %r9, 1;\nmin.u32 %r14, %r14, %r15;\nld.param.u64 %rd1, [d_in];\nmad.lo.u32 %r0, %r10, %r9, %r13;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f1, [%rd3];\nmad.lo.u32 %r0, %r10, %r9, %r7;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f2, [%rd3];\nmad.lo.u32 %r0, %r10, %r9, %r14;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f3, [%rd3];\nmad.lo.u32 %r0, %r3, %r9, %r13;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f4, [%rd3];\nmad.lo.u32 %r0, %r3, %r9, %r14;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f6, [%rd3];\nmad.lo.u32 %r0, %r11, %r9, %r13;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f7, [%rd3];\nmad.lo.u32 %r0, %r11, %r9, %r7;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f8, [%rd3];\nmad.lo.u32 %r0, %r11, %r9, %r14;\nmul.wide.u32 %rd2, %r0, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f9, [%rd3];\nsub.f32 %f10, %f3, %f1;\nsub.f32 %f11, %f6, %f4;\nfma.rn.f32 %f10, %f11, 0f40000000, %f10;\nsub.f32 %f12, %f9, %f7;\nadd.f32 %f10, %f10, %f12;\nsub.f32 %f13, %f7, %f1;\nsub.f32 %f11, %f8, %f2;\nfma.rn.f32 %f13, %f11, 0f40000000, %f13;\nsub.f32 %f12, %f9, %f3;\nadd.f32 %f13, %f13, %f12;\nmul.f32 %f0, %f10, %f10;\nfma.rn.f32 %f0, %f13, %f13, %f0;\nsqrt.approx.f32 %f0, %f0;\nmad.lo.u32 %r0, %r3, %r9, %r7;\nmul.wide.u32 %rd4, %r0, 4;\nld.param.u64 %rd5, [d_out];\nadd.u64 %rd6, %rd5, %rd4;\nst.global.f32 [%rd6], %f0;\nDONE_SOBEL:\nret;\n}\n"
-.asciz ".visible .entry k_resize_bilinear(.param .u64 d_in, .param .u64 d_out, .param .u32 inH, .param .u32 inW, .param .u32 outH, .param .u32 outW) {\n.reg .pred %p<3>;\n.reg .b32 %r<16>;\n.reg .b64 %rd<8>;\n.reg .f32 %f<18>;\nmov.u32 %r0, %ctaid.y;\nmov.u32 %r1, %ntid.y;\nmov.u32 %r2, %tid.y;\nmad.lo.u32 %r3, %r0, %r1, %r2;\nmov.u32 %r4, %ctaid.x;\nmov.u32 %r5, %ntid.x;\nmov.u32 %r6, %tid.x;\nmad.lo.u32 %r7, %r4, %r5, %r6;\nld.param.u32 %r8, [outH];\nld.param.u32 %r9, [outW];\nsetp.ge.u32 %p0, %r3, %r8;\nsetp.ge.u32 %p1, %r7, %r9;\nor.pred %p2, %p0, %p1;\n@%p2 bra DONE_RESIZE;\nld.param.u32 %r10, [inH];\nld.param.u32 %r11, [inW];\ncvt.rn.f32.u32 %f1, %r10;\ncvt.rn.f32.u32 %f2, %r8;\ndiv.approx.f32 %f3, %f1, %f2;\ncvt.rn.f32.u32 %f4, %r11;\ncvt.rn.f32.u32 %f5, %r9;\ndiv.approx.f32 %f6, %f4, %f5;\ncvt.rn.f32.u32 %f7, %r3;\nadd.f32 %f7, %f7, 0f3F000000;\nmul.f32 %f7, %f7, %f3;\nsub.f32 %f7, %f7, 0f3F000000;\nmax.f32 %f7, %f7, 0f00000000;\nsub.u32 %r12, %r10, 1;\ncvt.rn.f32.u32 %f8, %r12;\nmin.f32 %f7, %f7, %f8;\ncvt.rn.f32.u32 %f9, %r7;\nadd.f32 %f9, %f9, 0f3F000000;\nmul.f32 %f9, %f9, %f6;\nsub.f32 %f9, %f9, 0f3F000000;\nmax.f32 %f9, %f9, 0f00000000;\nsub.u32 %r13, %r11, 1;\ncvt.rn.f32.u32 %f10, %r13;\nmin.f32 %f9, %f9, %f10;\ncvt.rzi.u32.f32 %r14, %f7;\ncvt.rn.f32.u32 %f11, %r14;\nsub.f32 %f12, %f7, %f11;\nadd.u32 %r15, %r14, 1;\nmin.u32 %r15, %r15, %r12;\ncvt.rzi.u32.f32 %r0, %f9;\ncvt.rn.f32.u32 %f13, %r0;\nsub.f32 %f14, %f9, %f13;\nadd.u32 %r1, %r0, 1;\nmin.u32 %r1, %r1, %r13;\nld.param.u64 %rd1, [d_in];\nmad.lo.u32 %r2, %r14, %r11, %r0;\nmul.wide.u32 %rd2, %r2, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f15, [%rd3];\nmad.lo.u32 %r2, %r14, %r11, %r1;\nmul.wide.u32 %rd2, %r2, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f16, [%rd3];\nmad.lo.u32 %r2, %r15, %r11, %r0;\nmul.wide.u32 %rd2, %r2, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f17, [%rd3];\nmad.lo.u32 %r2, %r15, %r11, %r1;\nmul.wide.u32 %rd2, %r2, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f8, [%rd3];\nsub.f32 %f10, 0f3F800000, %f14;\nmul.f32 %f0, %f10, %f15;\nfma.rn.f32 %f0, %f14, %f16, %f0;\nmul.f32 %f2, %f10, %f17;\nfma.rn.f32 %f2, %f14, %f8, %f2;\nsub.f32 %f4, 0f3F800000, %f12;\nmul.f32 %f5, %f4, %f0;\nfma.rn.f32 %f5, %f12, %f2, %f5;\nmad.lo.u32 %r2, %r3, %r9, %r7;\nmul.wide.u32 %rd4, %r2, 4;\nld.param.u64 %rd5, [d_out];\nadd.u64 %rd6, %rd5, %rd4;\nst.global.f32 [%rd6], %f5;\nDONE_RESIZE:\nret;\n}\n"
+.ascii ".visible .entry k_resize_bilinear(.param .u64 d_in, .param .u64 d_out, .param .u32 inH, .param .u32 inW, .param .u32 outH, .param .u32 outW) {\n.reg .pred %p<3>;\n.reg .b32 %r<16>;\n.reg .b64 %rd<8>;\n.reg .f32 %f<18>;\nmov.u32 %r0, %ctaid.y;\nmov.u32 %r1, %ntid.y;\nmov.u32 %r2, %tid.y;\nmad.lo.u32 %r3, %r0, %r1, %r2;\nmov.u32 %r4, %ctaid.x;\nmov.u32 %r5, %ntid.x;\nmov.u32 %r6, %tid.x;\nmad.lo.u32 %r7, %r4, %r5, %r6;\nld.param.u32 %r8, [outH];\nld.param.u32 %r9, [outW];\nsetp.ge.u32 %p0, %r3, %r8;\nsetp.ge.u32 %p1, %r7, %r9;\nor.pred %p2, %p0, %p1;\n@%p2 bra DONE_RESIZE;\nld.param.u32 %r10, [inH];\nld.param.u32 %r11, [inW];\ncvt.rn.f32.u32 %f1, %r10;\ncvt.rn.f32.u32 %f2, %r8;\ndiv.approx.f32 %f3, %f1, %f2;\ncvt.rn.f32.u32 %f4, %r11;\ncvt.rn.f32.u32 %f5, %r9;\ndiv.approx.f32 %f6, %f4, %f5;\ncvt.rn.f32.u32 %f7, %r3;\nadd.f32 %f7, %f7, 0f3F000000;\nmul.f32 %f7, %f7, %f3;\nsub.f32 %f7, %f7, 0f3F000000;\nmax.f32 %f7, %f7, 0f00000000;\nsub.u32 %r12, %r10, 1;\ncvt.rn.f32.u32 %f8, %r12;\nmin.f32 %f7, %f7, %f8;\ncvt.rn.f32.u32 %f9, %r7;\nadd.f32 %f9, %f9, 0f3F000000;\nmul.f32 %f9, %f9, %f6;\nsub.f32 %f9, %f9, 0f3F000000;\nmax.f32 %f9, %f9, 0f00000000;\nsub.u32 %r13, %r11, 1;\ncvt.rn.f32.u32 %f10, %r13;\nmin.f32 %f9, %f9, %f10;\ncvt.rzi.u32.f32 %r14, %f7;\ncvt.rn.f32.u32 %f11, %r14;\nsub.f32 %f12, %f7, %f11;\nadd.u32 %r15, %r14, 1;\nmin.u32 %r15, %r15, %r12;\ncvt.rzi.u32.f32 %r0, %f9;\ncvt.rn.f32.u32 %f13, %r0;\nsub.f32 %f14, %f9, %f13;\nadd.u32 %r1, %r0, 1;\nmin.u32 %r1, %r1, %r13;\nld.param.u64 %rd1, [d_in];\nmad.lo.u32 %r2, %r14, %r11, %r0;\nmul.wide.u32 %rd2, %r2, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f15, [%rd3];\nmad.lo.u32 %r2, %r14, %r11, %r1;\nmul.wide.u32 %rd2, %r2, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f16, [%rd3];\nmad.lo.u32 %r2, %r15, %r11, %r0;\nmul.wide.u32 %rd2, %r2, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f17, [%rd3];\nmad.lo.u32 %r2, %r15, %r11, %r1;\nmul.wide.u32 %rd2, %r2, 4;\nadd.u64 %rd3, %rd1, %rd2;\nld.global.f32 %f8, [%rd3];\nsub.f32 %f10, 0f3F800000, %f14;\nmul.f32 %f0, %f10, %f15;\nfma.rn.f32 %f0, %f14, %f16, %f0;\nmul.f32 %f2, %f10, %f17;\nfma.rn.f32 %f2, %f14, %f8, %f2;\nsub.f32 %f4, 0f3F800000, %f12;\nmul.f32 %f5, %f4, %f0;\nfma.rn.f32 %f5, %f12, %f2, %f5;\nmad.lo.u32 %r2, %r3, %r9, %r7;\nmul.wide.u32 %rd4, %r2, 4;\nld.param.u64 %rd5, [d_out];\nadd.u64 %rd6, %rd5, %rd4;\nst.global.f32 [%rd6], %f5;\nDONE_RESIZE:\nret;\n}\n"
+.ascii ".visible .entry k_flash_attention(.param .u64 d_q, .param .u64 d_k, .param .u64 d_v, .param .u64 d_out, .param .u32 N, .param .u32 D, .param .f32 sm_scale, .param .u32 is_causal) {\n.reg .pred %p<6>;\n.reg .b32 %r<16>;\n.reg .b64 %rd<16>;\n.reg .f32 %f<16>;\nmov.u32 %r0, %ctaid.x;\nmov.u32 %r1, %ntid.x;\nmov.u32 %r2, %tid.x;\nmad.lo.u32 %r3, %r0, %r1, %r2;\nld.param.u32 %r4, [N];\nsetp.ge.u32 %p0, %r3, %r4;\n@%p0 bra DONE_FA;\nld.param.u32 %r5, [D];\nld.param.f32 %f10, [sm_scale];\nld.param.u32 %r6, [is_causal];\nmov.f32 %f0, 0fFF7FFFFF;\nmov.f32 %f1, 0f00000000;\nmov.u32 %r9, 0;\nmad.lo.u32 %r10, %r3, %r5, 0;\nFA_ZERO_LP:\nsetp.ge.u32 %p3, %r9, %r5;\n@%p3 bra FA_ZERO_DN;\nadd.u32 %r12, %r10, %r9;\nmul.wide.u32 %rd1, %r12, 4;\nld.param.u64 %rd7, [d_out];\nadd.u64 %rd8, %rd7, %rd1;\nst.global.f32 [%rd8], 0f00000000;\nadd.u32 %r9, %r9, 1;\nbra FA_ZERO_LP;\nFA_ZERO_DN:\nmov.u32 %r7, 0;\nmov.u32 %r8, %r4;\nsetp.eq.u32 %p1, %r6, 0;\n@%p1 bra FA_KEY_LP;\nadd.u32 %r8, %r3, 1;\nFA_KEY_LP:\nsetp.ge.u32 %p2, %r7, %r8;\n@%p2 bra FA_NORM;\nmov.f32 %f2, 0f00000000;\nmov.u32 %r9, 0;\nmad.lo.u32 %r10, %r3, %r5, 0;\nmad.lo.u32 %r11, %r7, %r5, 0;\nFA_DOT_LP:\nsetp.ge.u32 %p3, %r9, %r5;\n@%p3 bra FA_DOT_DN;\nadd.u32 %r12, %r10, %r9;\nmul.wide.u32 %rd1, %r12, 4;\nld.param.u64 %rd2, [d_q];\nadd.u64 %rd3, %rd2, %rd1;\nld.global.f32 %f3, [%rd3];\nadd.u32 %r13, %r11, %r9;\nmul.wide.u32 %rd4, %r13, 4;\nld.param.u64 %rd5, [d_k];\nadd.u64 %rd6, %rd5, %rd4;\nld.global.f32 %f4, [%rd6];\nfma.rn.f32 %f2, %f3, %f4, %f2;\nadd.u32 %r9, %r9, 1;\nbra FA_DOT_LP;\nFA_DOT_DN:\nmul.f32 %f2, %f2, %f10;\nmax.f32 %f5, %f0, %f2;\nsub.f32 %f6, %f0, %f5;\nmul.f32 %f6, %f6, 0f3FB8AA3B;\nex2.approx.f32 %f7, %f6;\nsub.f32 %f8, %f2, %f5;\nmul.f32 %f8, %f8, 0f3FB8AA3B;\nex2.approx.f32 %f9, %f8;\nmul.f32 %f1, %f1, %f7;\nadd.f32 %f1, %f1, %f9;\nmov.f32 %f0, %f5;\nmov.u32 %r9, 0;\nFA_V_LP:\nsetp.ge.u32 %p3, %r9, %r5;\n@%p3 bra FA_V_DN;\nadd.u32 %r12, %r10, %r9;\nmul.wide.u32 %rd1, %r12, 4;\nld.param.u64 %rd7, [d_out];\nadd.u64 %rd8, %rd7, %rd1;\nld.global.f32 %f11, [%rd8];\nmul.f32 %f11, %f11, %f7;\nadd.u32 %r13, %r11, %r9;\nmul.wide.u32 %rd4, %r13, 4;\nld.param.u64 %rd9, [d_v];\nadd.u64 %rd10, %rd9, %rd4;\nld.global.f32 %f12, [%rd10];\nfma.rn.f32 %f11, %f9, %f12, %f11;\nst.global.f32 [%rd8], %f11;\nadd.u32 %r9, %r9, 1;\nbra FA_V_LP;\nFA_V_DN:\nadd.u32 %r7, %r7, 1;\nbra FA_KEY_LP;\nFA_NORM:\nrcp.approx.f32 %f13, %f1;\nmov.u32 %r9, 0;\nmad.lo.u32 %r10, %r3, %r5, 0;\nFA_NORM_LP:\nsetp.ge.u32 %p3, %r9, %r5;\n@%p3 bra DONE_FA;\nadd.u32 %r12, %r10, %r9;\nmul.wide.u32 %rd1, %r12, 4;\nld.param.u64 %rd7, [d_out];\nadd.u64 %rd8, %rd7, %rd1;\nld.global.f32 %f11, [%rd8];\nmul.f32 %f11, %f11, %f13;\nst.global.f32 [%rd8], %f11;\nadd.u32 %r9, %r9, 1;\nbra FA_NORM_LP;\nDONE_FA:\nret;\n}\n"
+.ascii ".visible .entry k_rope(.param .u64 d_x, .param .u64 d_out, .param .u32 N, .param .u32 D, .param .u32 pos_offset, .param .f32 theta_base) {\n.reg .pred %p<3>;\n.reg .b32 %r<12>;\n.reg .b64 %rd<8>;\n.reg .f32 %f<12>;\nmov.u32 %r0, %ctaid.y;\nmov.u32 %r1, %ntid.y;\nmov.u32 %r2, %tid.y;\nmad.lo.u32 %r3, %r0, %r1, %r2;\nmov.u32 %r4, %ctaid.x;\nmov.u32 %r5, %ntid.x;\nmov.u32 %r6, %tid.x;\nmad.lo.u32 %r7, %r4, %r5, %r6;\nld.param.u32 %r8, [N];\nld.param.u32 %r9, [D];\nshr.u32 %r10, %r9, 1;\nsetp.ge.u32 %p0, %r3, %r8;\nsetp.ge.u32 %p1, %r7, %r10;\nor.pred %p2, %p0, %p1;\n@%p2 bra DONE_ROPE;\nld.param.u32 %r11, [pos_offset];\nadd.u32 %r11, %r3, %r11;\ncvt.rn.f32.u32 %f0, %r11;\nshl.b32 %r1, %r7, 1;\ncvt.rn.f32.u32 %f1, %r1;\ncvt.rn.f32.u32 %f2, %r9;\ndiv.approx.f32 %f3, %f1, %f2;\nld.param.f32 %f4, [theta_base];\nlg2.approx.f32 %f5, %f4;\nmul.f32 %f6, %f3, %f5;\nneg.f32 %f6, %f6;\nex2.approx.f32 %f7, %f6;\nmul.f32 %f8, %f0, %f7;\nsin.approx.f32 %f9, %f8;\ncos.approx.f32 %f10, %f8;\nmad.lo.u32 %r2, %r3, %r9, %r1;\nmul.wide.u32 %rd1, %r2, 4;\nld.param.u64 %rd2, [d_x];\nadd.u64 %rd3, %rd2, %rd1;\nld.global.f32 %f0, [%rd3];\nld.global.f32 %f1, [%rd3+4];\nmul.f32 %f2, %f0, %f10;\nmul.f32 %f3, %f1, %f9;\nsub.f32 %f4, %f2, %f3;\nmul.f32 %f5, %f0, %f9;\nfma.rn.f32 %f6, %f1, %f10, %f5;\nld.param.u64 %rd4, [d_out];\nadd.u64 %rd5, %rd4, %rd1;\nst.global.f32 [%rd5], %f4;\nst.global.f32 [%rd5+4], %f6;\nDONE_ROPE:\nret;\n}\n"
+.ascii ".visible .entry k_gemm_q8_0(.param .u64 d_a, .param .u64 d_w, .param .u64 d_c, .param .u32 M, .param .u32 N, .param .u32 K) {\n.reg .pred %p<6>;\n.reg .b32 %r<16>;\n.reg .b64 %rd<16>;\n.reg .f32 %f<8>;\n.reg .s8 %sb0;\nmov.u32 %r0, %ctaid.y;\nmov.u32 %r1, %ntid.y;\nmov.u32 %r2, %tid.y;\nmad.lo.u32 %r3, %r0, %r1, %r2;\nmov.u32 %r4, %ctaid.x;\nmov.u32 %r5, %ntid.x;\nmov.u32 %r6, %tid.x;\nmad.lo.u32 %r7, %r4, %r5, %r6;\nld.param.u32 %r8, [M];\nld.param.u32 %r9, [N];\nsetp.ge.u32 %p0, %r3, %r8;\nsetp.ge.u32 %p1, %r7, %r9;\nor.pred %p2, %p0, %p1;\n@%p2 bra DONE_Q8;\nld.param.u32 %r10, [K];\nshr.u32 %r11, %r10, 5;\nmov.f32 %f0, 0f00000000;\nmad.lo.u32 %r12, %r3, %r10, 0;\nmul.wide.u32 %rd1, %r12, 4;\nld.param.u64 %rd2, [d_a];\nadd.u64 %rd3, %rd2, %rd1;\nmad.lo.u32 %r13, %r7, %r11, 0;\nmul.wide.u32 %rd4, %r13, 36;\nld.param.u64 %rd5, [d_w];\nadd.u64 %rd6, %rd5, %rd4;\nmov.u32 %r14, 0;\nQ8_BLK_LP:\nsetp.ge.u32 %p3, %r14, %r11;\n@%p3 bra WRITE_Q8;\nmul.wide.u32 %rd7, %r14, 36;\nadd.u64 %rd8, %rd6, %rd7;\nld.global.f32 %f1, [%rd8];\nshl.b32 %r15, %r14, 5;\nmul.wide.u32 %rd9, %r15, 4;\nadd.u64 %rd10, %rd3, %rd9;\nadd.u64 %rd11, %rd8, 4;\nmov.u32 %r0, 0;\nQ8_ELEM_LP:\nsetp.ge.u32 %p4, %r0, 32;\n@%p4 bra Q8_BLK_NXT;\nmul.wide.u32 %rd12, %r0, 4;\nadd.u64 %rd13, %rd10, %rd12;\nld.global.f32 %f2, [%rd13];\nmul.wide.u32 %rd14, %r0, 1;\nadd.u64 %rd15, %rd11, %rd14;\nld.global.s8 %sb0, [%rd15];\ncvt.rn.f32.s8 %f3, %sb0;\nmul.f32 %f3, %f3, %f1;\nfma.rn.f32 %f0, %f2, %f3, %f0;\nadd.u32 %r0, %r0, 1;\nbra Q8_ELEM_LP;\nQ8_BLK_NXT:\nadd.u32 %r14, %r14, 1;\nbra Q8_BLK_LP;\nWRITE_Q8:\nmad.lo.u32 %r15, %r3, %r9, %r7;\nmul.wide.u32 %rd11, %r15, 4;\nld.param.u64 %rd12, [d_c];\nadd.u64 %rd13, %rd12, %rd11;\nst.global.f32 [%rd13], %f0;\nDONE_Q8:\nret;\n}\n"
+.asciz ".visible .entry k_gemm_q4_0(.param .u64 d_a, .param .u64 d_w, .param .u64 d_c, .param .u32 M, .param .u32 N, .param .u32 K) {\n.reg .pred %p<6>;\n.reg .b32 %r<16>;\n.reg .b64 %rd<16>;\n.reg .f32 %f<8>;\n.reg .u8 %ub0;\nmov.u32 %r0, %ctaid.y;\nmov.u32 %r1, %ntid.y;\nmov.u32 %r2, %tid.y;\nmad.lo.u32 %r3, %r0, %r1, %r2;\nmov.u32 %r4, %ctaid.x;\nmov.u32 %r5, %ntid.x;\nmov.u32 %r6, %tid.x;\nmad.lo.u32 %r7, %r4, %r5, %r6;\nld.param.u32 %r8, [M];\nld.param.u32 %r9, [N];\nsetp.ge.u32 %p0, %r3, %r8;\nsetp.ge.u32 %p1, %r7, %r9;\nor.pred %p2, %p0, %p1;\n@%p2 bra DONE_Q4;\nld.param.u32 %r10, [K];\nshr.u32 %r11, %r10, 5;\nmov.f32 %f0, 0f00000000;\nmad.lo.u32 %r12, %r3, %r10, 0;\nmul.wide.u32 %rd1, %r12, 4;\nld.param.u64 %rd2, [d_a];\nadd.u64 %rd3, %rd2, %rd1;\nmad.lo.u32 %r13, %r7, %r11, 0;\nmul.wide.u32 %rd4, %r13, 20;\nld.param.u64 %rd5, [d_w];\nadd.u64 %rd6, %rd5, %rd4;\nmov.u32 %r14, 0;\nQ4_BLK_LP:\nsetp.ge.u32 %p3, %r14, %r11;\n@%p3 bra WRITE_Q4;\nmul.wide.u32 %rd7, %r14, 20;\nadd.u64 %rd8, %rd6, %rd7;\nld.global.f32 %f1, [%rd8];\nshl.b32 %r15, %r14, 5;\nmul.wide.u32 %rd9, %r15, 4;\nadd.u64 %rd10, %rd3, %rd9;\nadd.u64 %rd11, %rd8, 4;\nmov.u32 %r0, 0;\nQ4_BYTE_LP:\nsetp.ge.u32 %p4, %r0, 16;\n@%p4 bra Q4_BLK_NXT;\nshl.b32 %r1, %r0, 1;\nmul.wide.u32 %rd12, %r1, 4;\nadd.u64 %rd13, %rd10, %rd12;\nld.global.f32 %f2, [%rd13];\nld.global.f32 %f3, [%rd13+4];\nmul.wide.u32 %rd14, %r0, 1;\nadd.u64 %rd15, %rd11, %rd14;\nld.global.u8 %ub0, [%rd15];\ncvt.u32.u8 %r2, %ub0;\nand.b32 %r5, %r2, 15;\nsub.s32 %r5, %r5, 8;\ncvt.rn.f32.s32 %f4, %r5;\nmul.f32 %f4, %f4, %f1;\nfma.rn.f32 %f0, %f2, %f4, %f0;\nshr.u32 %r6, %r2, 4;\nand.b32 %r6, %r6, 15;\nsub.s32 %r6, %r6, 8;\ncvt.rn.f32.s32 %f5, %r6;\nmul.f32 %f5, %f5, %f1;\nfma.rn.f32 %f0, %f3, %f5, %f0;\nadd.u32 %r0, %r0, 1;\nbra Q4_BYTE_LP;\nQ4_BLK_NXT:\nadd.u32 %r14, %r14, 1;\nbra Q4_BLK_LP;\nWRITE_Q4:\nmad.lo.u32 %r15, %r3, %r9, %r7;\nmul.wide.u32 %rd11, %r15, 4;\nld.param.u64 %rd12, [d_c];\nadd.u64 %rd13, %rd12, %rd11;\nst.global.f32 [%rd13], %f0;\nDONE_Q4:\nret;\n}\n"
 
 .text
 
@@ -642,13 +659,44 @@ asm_gpu_init:
     lea r8, [rip + gpu_kname_resize]
     call [rip + gpu_p_cuModuleGetFunction]
 
+    lea rcx, [rip + gpu_fn_flash_attention]
+    mov rdx, r12
+    lea r8, [rip + gpu_kname_flash_attention]
+    call [rip + gpu_p_cuModuleGetFunction]
+
+    lea rcx, [rip + gpu_fn_rope]
+    mov rdx, r12
+    lea r8, [rip + gpu_kname_rope]
+    call [rip + gpu_p_cuModuleGetFunction]
+
+    lea rcx, [rip + gpu_fn_gemm_q8_0]
+    mov rdx, r12
+    lea r8, [rip + gpu_kname_gemm_q8_0]
+    call [rip + gpu_p_cuModuleGetFunction]
+
+    lea rcx, [rip + gpu_fn_gemm_q4_0]
+    mov rdx, r12
+    lea r8, [rip + gpu_kname_gemm_q4_0]
+    call [rip + gpu_p_cuModuleGetFunction]
+
 .init_ptx_done:
     mov dword ptr [rip + gpu_has_cuda], 1
+    mov dword ptr [rip + gpu_backend_id], 1
     mov eax, 1
     jmp .init_exit
 
 .init_fail:
     mov dword ptr [rip + gpu_has_cuda], 0
+    lea rcx, [rip + gpu_str_amdhip]
+    call LoadLibraryA
+    test rax, rax
+    jz .init_host_fallback
+    mov dword ptr [rip + gpu_backend_id], 2
+    mov eax, 1
+    jmp .init_exit
+
+.init_host_fallback:
+    mov dword ptr [rip + gpu_backend_id], 3
     mov eax, 0
     jmp .init_exit
 
@@ -1149,6 +1197,57 @@ asm_gpu_is_nexus_array:
 .not_array:
     xor eax, eax
     inc eax                     # clear ZF (ZF = 0, so jne branches)
+    ret
+
+# ==============================================================================
+# Pure x86-64 Fast Float Exponential Approximation: asm_fast_expf(xmm0 = x)
+# Returns xmm0 = expf(x)
+# ==============================================================================
+.globl asm_fast_expf
+asm_fast_expf:
+    mov eax, 0xC2AE0000        # -87.0f
+    movd xmm1, eax
+    ucomiss xmm1, xmm0
+    ja .exp_zero
+    mov eax, 0x42B00000        # 88.0f
+    movd xmm1, eax
+    ucomiss xmm0, xmm1
+    ja .exp_inf
+
+    mov eax, 0x3D800000        # 0.0625f (1/16)
+    movd xmm1, eax
+    mulss xmm0, xmm1           # t = x / 16
+
+    mov eax, 0x3D2AAAAB        # 1/24
+    movd xmm1, eax
+    mulss xmm1, xmm0           # t / 24
+    mov eax, 0x3E2AAAAB        # 1/6
+    movd xmm2, eax
+    addss xmm1, xmm2           # 1/6 + t/24
+    mulss xmm1, xmm0
+    mov eax, 0x3F000000        # 0.5
+    movd xmm2, eax
+    addss xmm1, xmm2           # 0.5 + ...
+    mulss xmm1, xmm0
+    mov eax, 0x3F800000        # 1.0
+    movd xmm2, eax
+    addss xmm1, xmm2           # 1.0 + ...
+    mulss xmm1, xmm0
+    addss xmm1, xmm2           # exp(t)
+
+    mulss xmm1, xmm1           # ^2
+    mulss xmm1, xmm1           # ^4
+    mulss xmm1, xmm1           # ^8
+    mulss xmm1, xmm1           # ^16
+    movaps xmm0, xmm1
+    ret
+
+.exp_zero:
+    xorps xmm0, xmm0
+    ret
+.exp_inf:
+    mov eax, 0x7F800000
+    movd xmm0, eax
     ret
 
 # ==============================================================================
@@ -6188,7 +6287,7 @@ asm_gpu_dispatch:
     # In-place parameter update: param[i] -= lr * grad[i]
     # --------------------------------------------------------------------------
     cmp r14, 69
-    jne .check_op_fallback
+    jne .check_op_70
     test r15, r15
     jz .grad_fail
     mov rcx, r15
@@ -6318,6 +6417,1411 @@ asm_gpu_dispatch:
     mov r13, [rbp - 32]
     mov rdx, [rbp - 8]
     xorpd xmm0, xmm0
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.check_op_70:
+    # --------------------------------------------------------------------------
+    # OP 70: GPU_FLASH_ATTENTION (args = [q, k, v, is_causal])
+    # Tiled online softmax FlashAttention: O = softmax(Q * K^T / sqrt(D) + Mask) * V
+    # --------------------------------------------------------------------------
+    cmp r14, 70
+    jne .check_op_71
+    test r15, r15
+    jz .fa_fail
+    mov rcx, r15
+    call asm_gpu_is_nexus_array
+    jne .fa_fail
+
+    # Look up Q
+    movsd xmm0, [r15]
+    cvttsd2si rcx, xmm0
+    call asm_gpu_lookup_handle
+    test rax, rax
+    jz .fa_fail
+    mov rsi, rax            # rsi = Q handle
+
+    # Look up K
+    movsd xmm0, [r15 + 8]
+    cvttsd2si rcx, xmm0
+    call asm_gpu_lookup_handle
+    test rax, rax
+    jz .fa_fail
+    mov rbx, rax            # rbx = K handle
+
+    # Look up V
+    movsd xmm0, [r15 + 16]
+    cvttsd2si rcx, xmm0
+    call asm_gpu_lookup_handle
+    test rax, rax
+    jz .fa_fail
+    mov r12, rax            # r12 = V handle
+
+    # is_causal
+    xor r8d, r8d            # default 0
+    movsd xmm0, [r15 - 16]  # array length
+    cvttsd2si rcx, xmm0
+    cmp rcx, 3
+    jle 1f
+    movsd xmm0, [r15 + 24]
+    cvttsd2si r8, xmm0
+1:
+    mov [rbp - 112], r8d    # is_causal (32-bit)
+
+    # N = Q->dim0, D = Q->dim1
+    mov r10d, [rsi + 40]    # N
+    mov r11d, [rsi + 44]    # D
+    test r10d, r10d
+    jle .fa_fail
+    test r11d, r11d
+    jle .fa_fail
+
+    mov [rbp - 56], r10d    # N
+    mov [rbp - 60], r11d    # D
+
+    mov rax, r10
+    imul rax, r11
+    shl rax, 2              # size_bytes = N * D * 4
+    mov [rbp - 72], rax     # size_bytes
+
+    # sm_scale = 1.0f / sqrtf((float)D)
+    cvtsi2ss xmm0, r11d
+    sqrtss xmm0, xmm0
+    mov eax, 0x3F800000
+    movd xmm1, eax
+    divss xmm1, xmm0
+    movss [rbp - 64], xmm1  # sm_scale float
+
+    # Check if GPU execution possible (CUDA available and all tensors on device)
+    cmp dword ptr [rip + gpu_has_cuda], 1
+    jne .fa_host_exec
+    cmp dword ptr [rsi + 32], 1
+    jne .fa_host_exec
+    cmp dword ptr [rbx + 32], 1
+    jne .fa_host_exec
+    cmp dword ptr [r12 + 32], 1
+    jne .fa_host_exec
+
+    # Allocate output VRAM buffer
+    lea rax, [rbp - 48]
+    mov rcx, rax
+    mov rdx, [rbp - 72]     # size_bytes
+    call asm_gpu_alloc_vram
+    test eax, eax
+    jnz .fa_host_exec
+    mov rdi, [rbp - 48]     # rdi = d_out VRAM
+
+    # Prepare kernel parameters
+    mov rax, [rsi + 16]
+    mov [rbp - 120], rax    # d_q
+    mov rax, [rbx + 16]
+    mov [rbp - 128], rax    # d_k
+    mov rax, [r12 + 16]
+    mov [rbp - 136], rax    # d_v
+    mov rax, rdi
+    mov [rbp - 144], rax    # d_out
+
+    lea rax, [rbp - 120]
+    mov [rbp - 240], rax    # &d_q
+    lea rax, [rbp - 128]
+    mov [rbp - 232], rax    # &d_k
+    lea rax, [rbp - 136]
+    mov [rbp - 224], rax    # &d_v
+    lea rax, [rbp - 144]
+    mov [rbp - 216], rax    # &d_out
+    lea rax, [rbp - 56]
+    mov [rbp - 208], rax    # &N
+    lea rax, [rbp - 60]
+    mov [rbp - 200], rax    # &D
+    lea rax, [rbp - 64]
+    mov [rbp - 192], rax    # &sm_scale
+    lea rax, [rbp - 112]
+    mov [rbp - 184], rax    # &is_causal
+
+    # Launch k_flash_attention: grid = ((N + 31) / 32, 1, 1), block = (32, 1, 1)
+    mov eax, [rbp - 56]     # N
+    add eax, 31
+    shr eax, 5              # gridX = (N + 31) / 32
+    mov edx, eax            # gridDimX
+
+    mov rcx, [rip + gpu_fn_flash_attention]
+    test rcx, rcx
+    jz .fa_host_exec
+
+    mov r8d, 1              # gridDimY
+    mov r9d, 1              # gridDimZ
+    mov dword ptr [rsp + 32], 32   # blockDimX
+    mov dword ptr [rsp + 40], 1    # blockDimY
+    mov dword ptr [rsp + 48], 1    # blockDimZ
+    mov dword ptr [rsp + 56], 0    # sharedMemBytes
+    mov qword ptr [rsp + 64], 0    # hStream
+    lea rax, [rbp - 240]
+    mov [rsp + 72], rax            # kernelParams
+    mov qword ptr [rsp + 80], 0    # extra
+    call [rip + gpu_p_cuLaunchKernel]
+    test eax, eax
+    jnz .fa_host_exec
+
+    # Register output tensor handle (device)
+    mov rcx, 2              # type = tensor
+    mov rdx, rdi            # d_out
+    mov r8,  [rbp - 72]     # size_bytes
+    mov r9,  1              # is_device = 1
+    mov r10d, [rbp - 56]
+    mov [rsp + 32], r10d    # dim0 = N
+    mov r11d, [rbp - 60]
+    mov [rsp + 40], r11d    # dim1 = D
+    call asm_gpu_register_handle
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.fa_host_exec:
+    mov rcx, [rbp - 72]     # size_bytes
+    call malloc
+    test rax, rax
+    jz .fa_fail
+    mov rdi, rax            # rdi = host out buffer
+    mov [rbp - 144], rdi
+
+    mov [rbp - 152], rsi
+    mov [rbp - 160], rbx
+    mov [rbp - 168], r12
+
+    mov rcx, [rbp - 72]
+    call malloc
+    mov [rbp - 176], rax
+    mov rcx, [rbp - 72]
+    call malloc
+    mov [rbp - 248], rax
+    mov rcx, [rbp - 72]
+    call malloc
+    mov [rbp - 256], rax
+
+    mov rsi, [rbp - 152]
+    cmp dword ptr [rsi + 32], 1
+    jne 1f
+    mov rcx, [rbp - 176]
+    mov rdx, [rsi + 16]
+    mov r8, [rbp - 72]
+    call [rip + gpu_p_cuMemcpyDtoH]
+    jmp 2f
+1:
+    mov rcx, [rbp - 176]
+    mov rdx, [rsi + 16]
+    mov r8, [rbp - 72]
+    call memcpy
+2:
+    mov rbx, [rbp - 160]
+    cmp dword ptr [rbx + 32], 1
+    jne 3f
+    mov rcx, [rbp - 248]
+    mov rdx, [rbx + 16]
+    mov r8, [rbp - 72]
+    call [rip + gpu_p_cuMemcpyDtoH]
+    jmp 4f
+3:
+    mov rcx, [rbp - 248]
+    mov rdx, [rbx + 16]
+    mov r8, [rbp - 72]
+    call memcpy
+4:
+    mov r12, [rbp - 168]
+    cmp dword ptr [r12 + 32], 1
+    jne 5f
+    mov rcx, [rbp - 256]
+    mov rdx, [r12 + 16]
+    mov r8, [rbp - 72]
+    call [rip + gpu_p_cuMemcpyDtoH]
+    jmp 6f
+5:
+    mov rcx, [rbp - 256]
+    mov rdx, [r12 + 16]
+    mov r8, [rbp - 72]
+    call memcpy
+6:
+    mov r10d, [rbp - 56]    # N
+    mov r11d, [rbp - 60]    # D
+    movss xmm10, [rbp - 64] # sm_scale
+    mov r8d, [rbp - 112]    # is_causal
+    xor esi, esi            # i = 0
+
+.fa_host_row_lp:
+    cmp esi, r10d
+    jge .fa_host_done
+
+    mov rdi, [rbp - 144]
+    mov eax, esi
+    imul eax, r11d
+    lea rdx, [rdi + rax * 4]
+    xor ecx, ecx
+1:
+    cmp ecx, r11d
+    jge 2f
+    mov dword ptr [rdx + rcx * 4], 0
+    inc ecx
+    jmp 1b
+2:
+    mov eax, 0xFF7FFFFF
+    movd xmm7, eax          # m
+    xorps xmm8, xmm8        # l
+
+    mov ebx, r10d           # limit = N
+    test r8d, r8d
+    jz 3f
+    lea ebx, [esi + 1]      # limit = i + 1
+3:
+    xor r14d, r14d          # j = 0
+
+.fa_host_key_lp:
+    cmp r14d, ebx
+    jge .fa_host_norm
+
+    mov rax, [rbp - 176]    # host Q
+    mov r9, [rbp - 248]     # host K
+    mov ecx, esi
+    imul ecx, r11d
+    lea rcx, [rax + rcx * 4]
+    mov edx, r14d
+    imul edx, r11d
+    lea rdx, [r9 + rdx * 4]
+
+    xorps xmm0, xmm0
+    xor eax, eax
+.fa_host_dot_lp:
+    cmp eax, r11d
+    jge .fa_host_dot_dn
+    movss xmm1, [rcx + rax * 4]
+    movss xmm2, [rdx + rax * 4]
+    mulss xmm1, xmm2
+    addss xmm0, xmm1
+    inc eax
+    jmp .fa_host_dot_lp
+
+.fa_host_dot_dn:
+    mulss xmm0, xmm10
+    movaps xmm1, xmm7
+    maxss xmm1, xmm0        # m_new
+
+    movaps xmm2, xmm7
+    subss xmm2, xmm1
+    movaps [rbp - 264], xmm0
+    movaps [rbp - 272], xmm1
+    movaps xmm0, xmm2
+    call asm_fast_expf
+    movaps xmm3, xmm0       # alpha
+
+    movaps xmm0, [rbp - 264]
+    movaps xmm1, [rbp - 272]
+    subss xmm0, xmm1
+    movaps [rbp - 280], xmm3
+    call asm_fast_expf
+    movaps xmm4, xmm0       # p
+    movaps xmm3, [rbp - 280]
+    movaps xmm1, [rbp - 272]
+
+    mulss xmm8, xmm3
+    addss xmm8, xmm4
+    movaps xmm7, xmm1       # m = m_new
+
+    mov rdi, [rbp - 144]
+    mov eax, esi
+    imul eax, r11d
+    lea rdi, [rdi + rax * 4]
+    mov rax, [rbp - 256]
+    mov ecx, r14d
+    imul ecx, r11d
+    lea rax, [rax + rcx * 4]
+
+    xor ecx, ecx
+.fa_host_v_lp:
+    cmp ecx, r11d
+    jge .fa_host_v_dn
+    movss xmm0, [rdi + rcx * 4]
+    mulss xmm0, xmm3
+    movss xmm2, [rax + rcx * 4]
+    mulss xmm2, xmm4
+    addss xmm0, xmm2
+    movss [rdi + rcx * 4], xmm0
+    inc ecx
+    jmp .fa_host_v_lp
+.fa_host_v_dn:
+
+    inc r14d
+    jmp .fa_host_key_lp
+
+.fa_host_norm:
+    mov eax, 0x3F800000
+    movd xmm0, eax
+    divss xmm0, xmm8
+
+    mov rdi, [rbp - 144]
+    mov eax, esi
+    imul eax, r11d
+    lea rdi, [rdi + rax * 4]
+    xor ecx, ecx
+1:
+    cmp ecx, r11d
+    jge 2f
+    movss xmm1, [rdi + rcx * 4]
+    mulss xmm1, xmm0
+    movss [rdi + rcx * 4], xmm1
+    inc ecx
+    jmp 1b
+2:
+    inc esi
+    jmp .fa_host_row_lp
+
+.fa_host_done:
+    mov rcx, [rbp - 256]
+    call free
+    mov rcx, [rbp - 248]
+    call free
+    mov rcx, [rbp - 176]
+    call free
+
+    mov rcx, 2
+    mov rdx, [rbp - 144]
+    mov r8,  [rbp - 72]
+    mov r9,  0
+    mov r10d, [rbp - 56]
+    mov [rsp + 32], r10d
+    mov r11d, [rbp - 60]
+    mov [rsp + 40], r11d
+    call asm_gpu_register_handle
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.fa_fail:
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    xorpd xmm0, xmm0
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.check_op_71:
+    # --------------------------------------------------------------------------
+    # OP 71: GPU_ROPE (args = [x_handle, pos_offset, theta_base])
+    # Rotary Position Embeddings
+    # --------------------------------------------------------------------------
+    cmp r14, 71
+    jne .check_op_72
+    test r15, r15
+    jz .rope_fail
+    mov rcx, r15
+    call asm_gpu_is_nexus_array
+    jne .rope_fail
+
+    movsd xmm0, [r15]       # x_handle
+    cvttsd2si rcx, xmm0
+    call asm_gpu_lookup_handle
+    test rax, rax
+    jz .rope_fail
+    mov rsi, rax            # rsi = x handle
+
+    xor r8d, r8d            # default pos_offset = 0
+    mov eax, 0x461C4000     # default theta_base = 10000.0f
+    movd xmm2, eax
+
+    movsd xmm0, [r15 - 16]
+    cvttsd2si rcx, xmm0     # arg count
+    cmp rcx, 1
+    jle 1f
+    movsd xmm0, [r15 + 8]   # pos_offset
+    cvttsd2si r8, xmm0
+    cmp rcx, 2
+    jle 1f
+    movsd xmm0, [r15 + 16]  # theta_base
+    cvtsd2ss xmm2, xmm0
+1:
+    mov [rbp - 64], r8d     # pos_offset (32-bit)
+    movss [rbp - 68], xmm2  # theta_base (float)
+
+    mov r10d, [rsi + 40]    # N
+    mov r11d, [rsi + 44]    # D
+    test r10d, r10d
+    jle .rope_fail
+    test r11d, r11d
+    jle .rope_fail
+
+    mov [rbp - 56], r10d    # N
+    mov [rbp - 60], r11d    # D
+    mov rax, r10
+    imul rax, r11
+    shl rax, 2              # size_bytes
+    mov [rbp - 80], rax     # size_bytes (64-bit at -80 does not overlap theta_base at -68)
+
+    cmp dword ptr [rip + gpu_has_cuda], 1
+    jne .rope_host_exec
+    cmp dword ptr [rsi + 32], 1
+    jne .rope_host_exec
+
+    lea rax, [rbp - 48]
+    mov rcx, rax
+    mov rdx, [rbp - 80]
+    call asm_gpu_alloc_vram
+    test eax, eax
+    jnz .rope_host_exec
+    mov rdi, [rbp - 48]     # rdi = d_out VRAM
+
+    mov rax, [rsi + 16]
+    mov [rbp - 88], rax     # d_x
+    mov [rbp - 96], rdi     # d_out
+
+    lea rax, [rbp - 88]
+    mov [rbp - 144], rax    # &d_x
+    lea rax, [rbp - 96]
+    mov [rbp - 136], rax    # &d_out
+    lea rax, [rbp - 56]
+    mov [rbp - 128], rax    # &N
+    lea rax, [rbp - 60]
+    mov [rbp - 120], rax    # &D
+    lea rax, [rbp - 64]
+    mov [rbp - 112], rax    # &pos_offset
+    lea rax, [rbp - 68]
+    mov [rbp - 104], rax    # &theta_base
+
+    mov eax, [rbp - 60]     # D
+    shr eax, 1              # D / 2
+    add eax, 15
+    shr eax, 4              # gridX
+    mov edx, eax
+
+    mov eax, [rbp - 56]     # N
+    add eax, 15
+    shr eax, 4              # gridY
+    mov r8d, eax
+
+    mov rcx, [rip + gpu_fn_rope]
+    test rcx, rcx
+    jz .rope_host_exec
+
+    mov r9d, 1              # gridZ
+    mov dword ptr [rsp + 32], 16   # blockDimX
+    mov dword ptr [rsp + 40], 16   # blockDimY
+    mov dword ptr [rsp + 48], 1    # blockDimZ
+    mov dword ptr [rsp + 56], 0    # smem
+    mov qword ptr [rsp + 64], 0    # stream
+    lea rax, [rbp - 144]
+    mov [rsp + 72], rax            # params
+    mov qword ptr [rsp + 80], 0
+    call [rip + gpu_p_cuLaunchKernel]
+    test eax, eax
+    jnz .rope_host_exec
+
+    mov rcx, 2
+    mov rdx, rdi
+    mov r8,  [rbp - 80]
+    mov r9,  1
+    mov r10d, [rbp - 56]
+    mov [rsp + 32], r10d
+    mov r11d, [rbp - 60]
+    mov [rsp + 40], r11d
+    call asm_gpu_register_handle
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.rope_host_exec:
+    mov rcx, [rbp - 72]
+    call malloc
+    test rax, rax
+    jz .rope_fail
+    mov rdi, rax            # rdi = host out
+    mov [rbp - 88], rdi
+
+    mov rcx, [rbp - 72]
+    call malloc
+    mov [rbp - 80], rax     # host X
+
+    mov rsi, [rsi + 16]
+    cmp dword ptr [rsi + 32], 1
+    jne 1f
+    mov rcx, [rbp - 80]
+    mov rdx, rsi
+    mov r8, [rbp - 72]
+    call [rip + gpu_p_cuMemcpyDtoH]
+    jmp 2f
+1:
+    mov rcx, [rbp - 80]
+    mov rdx, rsi
+    mov r8, [rbp - 72]
+    call memcpy
+2:
+    mov r10d, [rbp - 56]    # N
+    mov r11d, [rbp - 60]    # D
+    mov ebx, r11d
+    shr ebx, 1              # D / 2
+    mov r12d, [rbp - 64]    # pos_offset
+
+    xor esi, esi            # t = 0
+.rope_host_t_lp:
+    cmp esi, r10d
+    jge .rope_host_done
+    lea eax, [esi + r12d]
+    cvtsi2sd xmm0, eax
+
+    xor r14d, r14d          # k = 0
+.rope_host_k_lp:
+    cmp r14d, ebx
+    jge .rope_host_t_nxt
+
+    lea eax, [r14d + r14d]
+    cvtsi2sd xmm1, eax
+    cvtsi2sd xmm2, r11d
+    divsd xmm1, xmm2
+
+    cvtss2sd xmm3, [rbp - 68]
+    movaps [rbp - 96], xmm0
+    movaps [rbp - 104], xmm1
+    movaps xmm0, xmm3
+    call log
+    movaps xmm1, [rbp - 104]
+    mulsd xmm0, xmm1
+    call exp
+    movaps xmm1, [rbp - 96]
+    divsd xmm1, xmm0
+    movaps [rbp - 112], xmm1
+    movaps xmm0, xmm1
+    call cos
+    movsd [rbp - 120], xmm0
+    movaps xmm0, [rbp - 112]
+    call sin
+    movsd [rbp - 128], xmm0
+
+    mov rax, [rbp - 80]
+    mov ecx, esi
+    imul ecx, r11d
+    lea ecx, [ecx + r14d * 2]
+    movss xmm0, [rax + rcx * 4]
+    movss xmm1, [rax + rcx * 4 + 4]
+    cvtss2sd xmm0, xmm0
+    cvtss2sd xmm1, xmm1
+
+    movsd xmm2, [rbp - 120]
+    movsd xmm3, [rbp - 128]
+    movaps xmm5, xmm0
+    mulsd xmm5, xmm2
+    movaps xmm6, xmm1
+    mulsd xmm6, xmm3
+    subsd xmm5, xmm6
+
+    mulsd xmm0, xmm3
+    mulsd xmm1, xmm2
+    addsd xmm0, xmm1
+
+    cvtsd2ss xmm5, xmm5
+    cvtsd2ss xmm0, xmm0
+    mov rdi, [rbp - 88]
+    movss [rdi + rcx * 4], xmm5
+    movss [rdi + rcx * 4 + 4], xmm0
+
+    inc r14d
+    jmp .rope_host_k_lp
+.rope_host_t_nxt:
+    inc esi
+    jmp .rope_host_t_lp
+
+.rope_host_done:
+    mov rcx, [rbp - 80]
+    call free
+
+    mov rcx, 2
+    mov rdx, [rbp - 88]
+    mov r8,  [rbp - 72]
+    mov r9,  0
+    mov r10d, [rbp - 56]
+    mov [rsp + 32], r10d
+    mov r11d, [rbp - 60]
+    mov [rsp + 40], r11d
+    call asm_gpu_register_handle
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.rope_fail:
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    xorpd xmm0, xmm0
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.check_op_72:
+    # --------------------------------------------------------------------------
+    # OP 72: GPU_QUANTIZE (args = [tensor_handle, format])
+    # format: 1.0 = Q8_0, 2.0 = Q4_0
+    # --------------------------------------------------------------------------
+    cmp r14, 72
+    jne .check_op_73
+    test r15, r15
+    jz .quant_fail_10
+    mov rcx, r15
+    call asm_gpu_is_nexus_array
+    jne .quant_fail_20
+
+    movsd xmm0, [r15]       # tensor_handle
+    cvttsd2si rcx, xmm0
+    call asm_gpu_lookup_handle
+    test rax, rax
+    jz .quant_fail_30
+    mov rsi, rax            # rsi = tensor handle
+
+    mov rax, 1              # default format = 1 (Q8_0)
+    mov rcx, [r15 - 8]      # integer array length
+    cmp rcx, 1
+    jle 1f
+    movsd xmm0, [r15 + 8]
+    cvttsd2si rax, xmm0
+1:
+    mov [rbp - 52], eax     # format (1=Q8_0, 2=Q4_0, 4-byte int)
+
+    mov r10d, [rsi + 40]    # M
+    mov r11d, [rsi + 44]    # K
+    test r10d, r10d
+    jle .quant_fail_40
+    test r11d, r11d
+    jle .quant_fail_50
+
+    mov [rbp - 56], r10d    # M
+    mov [rbp - 60], r11d    # K
+
+    lea eax, [r11d + 31]
+    shr eax, 5
+    mov [rbp - 64], eax     # num_blocks_per_row
+
+    cmp dword ptr [rbp - 52], 2
+    je .quant_q4_bytes
+    mov edx, 36
+    imul edx, eax
+    mov [rbp - 68], edx     # bytes_per_row
+    mov rax, r10
+    imul rax, rdx
+    mov [rbp - 80], rax     # total_bytes
+    jmp .quant_alloc
+.quant_q4_bytes:
+    mov edx, 20
+    imul edx, eax
+    mov [rbp - 68], edx     # bytes_per_row
+    mov rax, r10
+    imul rax, rdx
+    mov [rbp - 80], rax     # total_bytes
+
+.quant_alloc:
+    mov rcx, [rbp - 80]     # total_bytes
+    call malloc
+    test rax, rax
+    jz .quant_fail
+    mov rdi, rax            # rdi = host quantized buffer
+    mov [rbp - 88], rdi
+
+    mov r10d, [rbp - 56]
+    mov r11d, [rbp - 60]
+    mov rax, r10
+    imul rax, r11
+    shl rax, 2              # src_bytes = M * K * 4
+    mov [rbp - 96], rax
+    mov rcx, rax
+    call malloc
+    test rax, rax
+    jz .quant_fail
+    mov rbx, rax            # rbx = host src float buffer
+    mov [rbp - 104], rbx
+
+    cmp dword ptr [rsi + 32], 1
+    jne 1f
+    mov rcx, rbx
+    mov rdx, [rsi + 16]     # VRAM src
+    mov r8, [rbp - 96]
+    call [rip + gpu_p_cuMemcpyDtoH]
+    jmp 2f
+1:
+    mov rcx, rbx
+    mov rdx, [rsi + 16]     # Host src
+    mov r8, [rbp - 96]
+    call memcpy
+2:
+    mov r10d, [rbp - 56]    # M
+    mov r11d, [rbp - 60]    # K
+    mov r12d, [rbp - 64]    # num_blocks_per_row
+    mov rbx, [rbp - 104]    # host float src
+    mov rdi, [rbp - 88]     # host quant out
+
+    cmp dword ptr [rbp - 52], 2
+    je .quant_do_q4
+
+    xor esi, esi            # row = 0
+.q8_row_lp:
+    cmp esi, r10d
+    jge .quant_upload
+    xor r14d, r14d          # blk = 0
+.q8_blk_lp:
+    cmp r14d, r12d
+    jge .q8_row_nxt
+
+    mov eax, esi
+    imul eax, r11d
+    mov ecx, r14d
+    shl ecx, 5
+    add eax, ecx
+    lea rdx, [rbx + rax * 4]
+
+    xorps xmm0, xmm0
+    mov eax, 0x7FFFFFFF
+    movd xmm3, eax
+    xor ecx, ecx
+.q8_amax_lp:
+    cmp ecx, 32
+    jge .q8_amax_dn
+    movss xmm1, [rdx + rcx * 4]
+    andps xmm1, xmm3
+    maxss xmm0, xmm1
+    inc ecx
+    jmp .q8_amax_lp
+.q8_amax_dn:
+
+    mov eax, 0x42FE0000     # 127.0f
+    movd xmm2, eax
+    xorps xmm1, xmm1
+    ucomiss xmm0, xmm1
+    jz 1f
+    divss xmm0, xmm2
+    movaps xmm2, xmm0
+    divss xmm2, xmm0
+    jmp 2f
+1:
+    xorps xmm0, xmm0
+    xorps xmm2, xmm2
+2:
+    mov eax, esi
+    imul eax, r12d
+    add eax, r14d
+    imul eax, 36
+    lea r8, [rdi + rax]
+
+    movss [r8], xmm0
+
+    xor ecx, ecx
+.q8_elem_lp:
+    cmp ecx, 32
+    jge .q8_blk_nxt
+    movss xmm1, [rdx + rcx * 4]
+    xorps xmm4, xmm4
+    ucomiss xmm0, xmm4
+    jz 3f
+    divss xmm1, xmm0
+    cvtss2si eax, xmm1
+    cmp eax, 127
+    jle 4f
+    mov eax, 127
+4:
+    cmp eax, -128
+    jge 5f
+    mov eax, -128
+5:
+    mov byte ptr [r8 + 4 + rcx], al
+    jmp 6f
+3:
+    mov byte ptr [r8 + 4 + rcx], 0
+6:
+    inc ecx
+    jmp .q8_elem_lp
+
+.q8_blk_nxt:
+    inc r14d
+    jmp .q8_blk_lp
+.q8_row_nxt:
+    inc esi
+    jmp .q8_row_lp
+
+.quant_do_q4:
+    xor esi, esi            # row = 0
+.q4_row_lp:
+    cmp esi, r10d
+    jge .quant_upload
+    xor r14d, r14d          # blk = 0
+.q4_blk_lp:
+    cmp r14d, r12d
+    jge .q4_row_nxt
+
+    mov eax, esi
+    imul eax, r11d
+    mov ecx, r14d
+    shl ecx, 5
+    add eax, ecx
+    lea rdx, [rbx + rax * 4]
+
+    xorps xmm0, xmm0
+    mov eax, 0x7FFFFFFF
+    movd xmm3, eax
+    xor ecx, ecx
+.q4_amax_lp:
+    cmp ecx, 32
+    jge .q4_amax_dn
+    movss xmm1, [rdx + rcx * 4]
+    andps xmm1, xmm3
+    maxss xmm0, xmm1
+    inc ecx
+    jmp .q4_amax_lp
+.q4_amax_dn:
+
+    mov eax, 0x40E00000     # 7.0f
+    movd xmm2, eax
+    xorps xmm1, xmm1
+    ucomiss xmm0, xmm1
+    jz 1f
+    divss xmm0, xmm2        # scale = amax / 7.0f
+    jmp 2f
+1:
+    xorps xmm0, xmm0
+2:
+    mov eax, esi
+    imul eax, r12d
+    add eax, r14d
+    imul eax, 20
+    lea r8, [rdi + rax]
+
+    movss [r8], xmm0        # store scale
+
+    xor ecx, ecx
+.q4_pack_lp:
+    cmp ecx, 16
+    jge .q4_blk_nxt
+    xorps xmm4, xmm4
+    ucomiss xmm0, xmm4
+    jz 1f
+    # q0
+    movss xmm1, [rdx + rcx * 8]
+    divss xmm1, xmm0
+    cvtss2si eax, xmm1
+    add eax, 8
+    cmp eax, 15
+    jle 5f
+    mov eax, 15
+5:
+    cmp eax, 0
+    jge 6f
+    xor eax, eax
+6:
+    and eax, 15
+    mov r9d, eax
+
+    # q1
+    movss xmm1, [rdx + rcx * 8 + 4]
+    divss xmm1, xmm0
+    cvtss2si eax, xmm1
+    add eax, 8
+    cmp eax, 15
+    jle 7f
+    mov eax, 15
+7:
+    cmp eax, 0
+    jge 8f
+    xor eax, eax
+8:
+    and eax, 15
+    shl eax, 4
+    or eax, r9d
+    mov byte ptr [r8 + 4 + rcx], al
+    jmp 2f
+1:
+    mov byte ptr [r8 + 4 + rcx], 0x88
+2:
+    inc ecx
+    jmp .q4_pack_lp
+
+.q4_blk_nxt:
+    inc r14d
+    jmp .q4_blk_lp
+.q4_row_nxt:
+    inc esi
+    jmp .q4_row_lp
+
+.quant_upload:
+    mov rcx, [rbp - 104]
+    call free
+
+    xor r14d, r14d          # is_device = 0
+    cmp dword ptr [rip + gpu_has_cuda], 1
+    jne .quant_register
+
+    lea rax, [rbp - 48]
+    mov rcx, rax
+    mov rdx, [rbp - 80]     # total_bytes
+    call asm_gpu_alloc_vram
+    test eax, eax
+    jnz .quant_register
+
+    mov rsi, [rbp - 48]     # d_ptr
+    mov rcx, rsi
+    mov rdx, [rbp - 88]     # host quant buffer
+    mov r8, [rbp - 80]
+    call [rip + gpu_p_cuMemcpyHtoD]
+    test eax, eax
+    jnz .quant_register
+
+    mov rcx, [rbp - 88]
+    call free
+    mov [rbp - 88], rsi     # ptr is VRAM
+    mov r14d, 1             # is_device = 1
+
+.quant_register:
+    mov rcx, 1              # type = buffer
+    mov rdx, [rbp - 88]     # ptr
+    mov r8,  [rbp - 80]     # size_bytes
+    mov r9,  r14            # is_device
+    mov r10d, [rbp - 56]
+    mov [rsp + 32], r10d    # dim0 = M
+    mov r11d, [rbp - 60]
+    mov [rsp + 40], r11d    # dim1 = K
+    call asm_gpu_register_handle
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.quant_fail_10:
+    mov rax, -10
+    jmp .quant_fail_val
+.quant_fail_20:
+    mov rax, -20
+    jmp .quant_fail_val
+.quant_fail_30:
+    mov rax, -30
+    jmp .quant_fail_val
+.quant_fail_40:
+    mov rax, -40
+    jmp .quant_fail_val
+.quant_fail_50:
+    mov rax, -50
+    jmp .quant_fail_val
+
+.quant_fail:
+    xor eax, eax
+.quant_fail_val:
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.check_op_73:
+    # --------------------------------------------------------------------------
+    # OP 73: GPU_GEMM_QUANTIZED (args = [act, w_quant, format, M, K, N])
+    # C[M, N] = A[M, K] * W_quant[N, K]^T
+    # --------------------------------------------------------------------------
+    cmp r14, 73
+    jne .check_op_74
+    test r15, r15
+    jz .qgemm_fail
+    mov rcx, r15
+    call asm_gpu_is_nexus_array
+    jne .qgemm_fail
+
+    movsd xmm0, [r15]       # act_handle
+    cvttsd2si rcx, xmm0
+    call asm_gpu_lookup_handle
+    test rax, rax
+    jz .qgemm_fail
+    mov rsi, rax            # rsi = act handle
+
+    movsd xmm0, [r15 + 8]   # w_quant_handle
+    cvttsd2si rcx, xmm0
+    call asm_gpu_lookup_handle
+    test rax, rax
+    jz .qgemm_fail
+    mov rbx, rax            # rbx = w_quant handle
+
+    movsd xmm0, [r15 + 16]  # format (1=Q8_0, 2=Q4_0)
+    cvttsd2si rax, xmm0
+    mov [rbp - 52], eax     # format (4-byte int at -52)
+
+    movsd xmm0, [r15 + 24]  # M
+    cvttsd2si r8, xmm0
+    movsd xmm0, [r15 + 32]  # K
+    cvttsd2si r9, xmm0
+    movsd xmm0, [r15 + 40]  # N
+    cvttsd2si r10, xmm0
+
+    test r8d, r8d
+    jle .qgemm_fail
+    test r9d, r9d
+    jle .qgemm_fail
+    test r10d, r10d
+    jle .qgemm_fail
+
+    mov [rbp - 56], r8d     # M
+    mov [rbp - 60], r9d     # K
+    mov [rbp - 64], r10d    # N
+
+    mov rax, r8
+    imul rax, r10
+    shl rax, 2
+    mov [rbp - 72], rax     # out_size_bytes (8-byte at -72)
+
+    cmp dword ptr [rip + gpu_has_cuda], 1
+    jne .qgemm_host_exec
+    cmp dword ptr [rsi + 32], 1
+    jne .qgemm_host_exec
+    cmp dword ptr [rbx + 32], 1
+    jne .qgemm_host_exec
+
+    lea rax, [rbp - 48]
+    mov rcx, rax
+    mov rdx, [rbp - 72]
+    call asm_gpu_alloc_vram
+    test eax, eax
+    jnz .qgemm_host_exec
+    mov rdi, [rbp - 48]     # d_c
+
+    mov rax, [rsi + 16]
+    mov [rbp - 80], rax     # d_a
+    mov rax, [rbx + 16]
+    mov [rbp - 88], rax     # d_w
+    mov [rbp - 96], rdi     # d_c
+
+    lea rax, [rbp - 80]
+    mov [rbp - 144], rax    # &d_a
+    lea rax, [rbp - 88]
+    mov [rbp - 136], rax    # &d_w
+    lea rax, [rbp - 96]
+    mov [rbp - 128], rax    # &d_c
+    lea rax, [rbp - 56]
+    mov [rbp - 120], rax    # &M
+    lea rax, [rbp - 64]
+    mov [rbp - 112], rax    # &N
+    lea rax, [rbp - 60]
+    mov [rbp - 104], rax    # &K
+
+    cmp dword ptr [rbp - 52], 2
+    je 1f
+    mov rcx, [rip + gpu_fn_gemm_q8_0]
+    jmp 2f
+1:
+    mov rcx, [rip + gpu_fn_gemm_q4_0]
+2:
+    test rcx, rcx
+    jz .qgemm_host_exec
+
+    mov eax, [rbp - 64]     # N
+    add eax, 15
+    shr eax, 4
+    mov edx, eax            # gridDimX
+
+    mov eax, [rbp - 56]     # M
+    add eax, 15
+    shr eax, 4
+    mov r8d, eax            # gridDimY
+
+    mov r9d, 1              # gridDimZ
+    mov dword ptr [rsp + 32], 16
+    mov dword ptr [rsp + 40], 16
+    mov dword ptr [rsp + 48], 1
+    mov dword ptr [rsp + 56], 0
+    mov qword ptr [rsp + 64], 0
+    lea rax, [rbp - 144]
+    mov [rsp + 72], rax     # params
+    mov qword ptr [rsp + 80], 0
+    call [rip + gpu_p_cuLaunchKernel]
+    test eax, eax
+    jnz .qgemm_host_exec
+
+    mov rcx, 2
+    mov rdx, rdi
+    mov r8,  [rbp - 72]
+    mov r9,  1
+    mov r10d, [rbp - 56]
+    mov [rsp + 32], r10d    # dim0 = M
+    mov r11d, [rbp - 64]
+    mov [rsp + 40], r11d    # dim1 = N
+    call asm_gpu_register_handle
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.qgemm_host_exec:
+    mov rcx, [rbp - 72]     # out_size_bytes
+    call malloc
+    test rax, rax
+    jz .qgemm_fail
+    mov rdi, rax            # host C
+    mov [rbp - 96], rdi
+
+    mov r8, [rsi + 24]
+    mov [rbp - 160], r8
+    mov rcx, r8
+    call malloc
+    mov [rbp - 80], rax     # host A
+    cmp dword ptr [rsi + 32], 1
+    jne 1f
+    mov rcx, [rbp - 80]
+    mov rdx, [rsi + 16]
+    mov r8, [rbp - 160]
+    call [rip + gpu_p_cuMemcpyDtoH]
+    jmp 2f
+1:
+    mov rcx, [rbp - 80]
+    mov rdx, [rsi + 16]
+    mov r8, [rbp - 160]
+    call memcpy
+2:
+    mov r8, [rbx + 24]
+    mov [rbp - 168], r8
+    mov rcx, r8
+    call malloc
+    mov [rbp - 88], rax     # host W
+    cmp dword ptr [rbx + 32], 1
+    jne 3f
+    mov rcx, [rbp - 88]
+    mov rdx, [rbx + 16]
+    mov r8, [rbp - 168]
+    call [rip + gpu_p_cuMemcpyDtoH]
+    jmp 4f
+3:
+    mov rcx, [rbp - 88]
+    mov rdx, [rbx + 16]
+    mov r8, [rbp - 168]
+    call memcpy
+4:
+    mov r10d, [rbp - 56]    # M
+    mov r11d, [rbp - 60]    # K
+    mov r12d, [rbp - 64]    # N
+    mov ebx, r11d
+    shr ebx, 5              # num_blocks = K / 32
+
+    mov rdi, [rbp - 96]     # host C
+    mov rsi, [rbp - 80]     # host A
+    mov r13, [rbp - 88]     # host W
+
+    cmp dword ptr [rbp - 52], 2
+    je .qgemm_host_q4
+
+    # Host Q8_0 GEMM
+    xor r8d, r8d            # i = 0
+.q8_gemm_i:
+    cmp r8d, r10d
+    jge .qgemm_host_done
+    xor r9d, r9d            # j = 0
+.q8_gemm_j:
+    cmp r9d, r12d
+    jge .q8_gemm_i_nxt
+
+    xorps xmm0, xmm0        # acc = 0
+
+    mov eax, r8d
+    imul eax, r11d
+    lea rdx, [rsi + rax * 4]
+    mov [rbp - 176], rdx
+
+    mov eax, r9d
+    imul eax, ebx
+    imul eax, 36
+    lea rcx, [r13 + rax]
+
+    xor r14d, r14d          # b = 0
+.q8_gemm_b:
+    cmp r14d, ebx
+    jge .q8_gemm_store
+
+    imul eax, r14d, 36
+    lea r15, [rcx + rax]
+    movss xmm1, [r15]       # scale
+
+    imul eax, r14d, 32
+    mov rdx, [rbp - 176]
+    lea r10, [rdx + rax * 4]
+
+    xor edx, edx
+.q8_gemm_u:
+    cmp edx, 32
+    jge .q8_gemm_b_nxt
+    movss xmm2, [r10 + rdx * 4]
+    movsx eax, byte ptr [r15 + 4 + rdx]
+    cvtsi2ss xmm3, eax
+    mulss xmm3, xmm1
+    mulss xmm2, xmm3
+    addss xmm0, xmm2
+    inc edx
+    jmp .q8_gemm_u
+
+.q8_gemm_b_nxt:
+    inc r14d
+    jmp .q8_gemm_b
+
+.q8_gemm_store:
+    mov r10d, [rbp - 56]
+    mov eax, r8d
+    imul eax, r12d
+    add eax, r9d
+    movss [rdi + rax * 4], xmm0
+    inc r9d
+    jmp .q8_gemm_j
+.q8_gemm_i_nxt:
+    inc r8d
+    jmp .q8_gemm_i
+
+.qgemm_host_q4:
+    xor r8d, r8d            # i = 0
+.q4_gemm_i:
+    cmp r8d, r10d
+    jge .qgemm_host_done
+    xor r9d, r9d            # j = 0
+.q4_gemm_j:
+    cmp r9d, r12d
+    jge .q4_gemm_i_nxt
+
+    xorps xmm0, xmm0        # acc = 0
+
+    mov eax, r8d
+    imul eax, r11d
+    lea rdx, [rsi + rax * 4]
+    mov [rbp - 176], rdx
+
+    mov eax, r9d
+    imul eax, ebx
+    imul eax, 20
+    lea rcx, [r13 + rax]
+
+    xor r14d, r14d          # b = 0
+.q4_gemm_b:
+    cmp r14d, ebx
+    jge .q4_gemm_store
+
+    imul eax, r14d, 20
+    lea r15, [rcx + rax]
+    movss xmm1, [r15]       # scale
+
+    imul eax, r14d, 32
+    mov rdx, [rbp - 176]
+    lea r10, [rdx + rax * 4]
+
+    xor edx, edx
+.q4_gemm_u:
+    cmp edx, 16
+    jge .q4_gemm_b_nxt
+    movzx ecx, byte ptr [r15 + 4 + rdx]
+    mov eax, ecx
+    and eax, 15
+    sub eax, 8
+    cvtsi2ss xmm3, eax
+    mulss xmm3, xmm1
+    movss xmm2, [r10 + rdx * 8]
+    mulss xmm2, xmm3
+    addss xmm0, xmm2
+
+    shr ecx, 4
+    and ecx, 15
+    sub ecx, 8
+    cvtsi2ss xmm3, ecx
+    mulss xmm3, xmm1
+    movss xmm2, [r10 + rdx * 8 + 4]
+    mulss xmm2, xmm3
+    addss xmm0, xmm2
+
+    inc edx
+    jmp .q4_gemm_u
+
+.q4_gemm_b_nxt:
+    inc r14d
+    jmp .q4_gemm_b
+
+.q4_gemm_store:
+    mov r10d, [rbp - 56]
+    mov eax, r8d
+    imul eax, r12d
+    add eax, r9d
+    movss [rdi + rax * 4], xmm0
+    inc r9d
+    jmp .q4_gemm_j
+.q4_gemm_i_nxt:
+    inc r8d
+    jmp .q4_gemm_i
+
+.qgemm_host_done:
+    mov rcx, [rbp - 88]
+    call free
+    mov rcx, [rbp - 80]
+    call free
+
+    mov rcx, 2
+    mov rdx, [rbp - 96]
+    mov r8,  [rbp - 72]
+    mov r9,  0
+    mov r10d, [rbp - 56]
+    mov [rsp + 32], r10d    # dim0 = M
+    mov r11d, [rbp - 64]
+    mov [rsp + 40], r11d    # dim1 = N
+    call asm_gpu_register_handle
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.qgemm_fail:
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    xorpd xmm0, xmm0
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.check_op_74:
+    # --------------------------------------------------------------------------
+    # OP 74: GPU_GET_BACKEND (args = [name_flag])
+    # Returns backend id (1.0 = CUDA, 2.0 = ROCm, 3.0 = AVX2) or backend name string
+    # --------------------------------------------------------------------------
+    cmp r14, 74
+    jne .check_op_fallback
+    test r15, r15
+    jz .backend_id_only
+    mov rcx, r15
+    call asm_gpu_is_nexus_array
+    jne .backend_id_only
+
+    movsd xmm0, [r15 - 16]
+    cvttsd2si rcx, xmm0
+    cmp rcx, 0
+    jle .backend_id_only
+    movsd xmm0, [r15]
+    cvttsd2si rax, xmm0
+    cmp rax, 1
+    jne .backend_id_only
+
+    mov eax, [rip + gpu_backend_id]
+    cmp eax, 1
+    je 1f
+    cmp eax, 2
+    je 2f
+    lea rcx, [rip + gpu_fallback_name]
+    jmp 3f
+1:
+    lea rcx, [rip + gpu_backend_cuda_name]
+    jmp 3f
+2:
+    lea rcx, [rip + gpu_backend_rocm_name]
+3:
+    call asm_create_nexus_string
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
+    mov [r13 + rdx * 8], rax
+    jmp .dispatch_done
+
+.backend_id_only:
+    mov eax, [rip + gpu_backend_id]
+    cvtsi2sd xmm0, rax
+    mov r13, [rbp - 32]
+    mov rdx, [rbp - 8]
     movsd [r13 + rdx * 8], xmm0
     jmp .dispatch_done
 

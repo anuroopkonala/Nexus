@@ -136,6 +136,7 @@ file_name: .asciz "tests/vm/boot.nxasm"
 read_mode: .asciz "r"
 read_bin_mode: .asciz "rb"
 write_mode: .asciz "w"
+write_bin_mode: .asciz "wb"
 scan_fmt: .asciz "%s"
 str_hex_fmt: .asciz ""
 err_msg: .asciz "Failed to open input file: %s\n"
@@ -1401,7 +1402,22 @@ op_dict_set:
     jz .dict_set_next
     cmp r11, rdx                # FAST PATH: Pointer Equality
     je .dict_set_found
-    
+
+    mov rax, 0x7FF0000000000000
+    test r11, rax
+    jnz .dict_set_next
+    test rdx, rax
+    jnz .dict_set_next
+    cmp r11, 0x10000
+    jb .dict_set_next
+    cmp rdx, 0x10000
+    jb .dict_set_next
+    mov rax, 0x00007FFFFFFFFFFF
+    cmp r11, rax
+    ja .dict_set_next
+    cmp rdx, rax
+    ja .dict_set_next
+
     mov al, [r11]
     cmp al, [rdx]
     jne .dict_set_next
@@ -1620,7 +1636,22 @@ op_dict_get:
     jz .dict_get_next
     cmp r11, rdx                # FAST PATH: Pointer Equality
     je .dict_get_found
-    
+
+    mov rax, 0x7FF0000000000000
+    test r11, rax
+    jnz .dict_get_next
+    test rdx, rax
+    jnz .dict_get_next
+    cmp r11, 0x10000
+    jb .dict_get_next
+    cmp rdx, 0x10000
+    jb .dict_get_next
+    mov rax, 0x00007FFFFFFFFFFF
+    cmp r11, rax
+    ja .dict_get_next
+    cmp rdx, rax
+    ja .dict_get_next
+
     mov al, [r11]
     cmp al, [rdx]
     jne .dict_get_next
@@ -2010,17 +2041,41 @@ mark_if_valid:
     jmp .miv_scan_crt
 
 .miv_mark_block:
-    # Verify type tag: [rax + 16] must be <= 3
     mov rdx, [rax + 16]
+    # Check ASCII aliases
+    mov r10, 0x535452494E47     # "STRING"
+    cmp rdx, r10
+    jne 1f
+    xor edx, edx                # normalized to type 0
+    jmp .miv_tag_normalized
+1:
+    mov r10, 0x4152524159       # "ARRAY"
+    cmp rdx, r10
+    jne 2f
+    mov edx, 3                  # normalized to type 3
+    jmp .miv_tag_normalized
+2:
+    mov r10, 0x44494354         # "DICT"
+    cmp rdx, r10
+    jne 3f
+    mov edx, 1                  # normalized to type 1
+    jmp .miv_tag_normalized
+3:
+    cmp rdx, 0xAA01             # Enum
+    jne 4f
+    xor edx, edx                # normalized to type 0 (scalar)
+    jmp .miv_tag_normalized
+4:
     cmp rdx, 3
     ja .miv_ret
 
+.miv_tag_normalized:
     # Check if already marked
     cmp qword ptr [rax], 1
     je .miv_ret
     mov qword ptr [rax], 1       # mark live!
 
-    # Recurse on children based on type tag in rdx:
+    # Recurse on children based on normalized type tag in rdx:
     test rdx, rdx
     jz .miv_ret                  # Type 0: String/bytes -> no children
 
@@ -2190,7 +2245,7 @@ op_fopen:
     jnz 1f
     mov rcx, [rdi + r8 * 8]
 1:
-    lea rdx, [rip + read_mode] # arg2: "r"
+    lea rdx, [rip + read_bin_mode] # arg2: "rb"
 
     mov eax, [rip + vm_debug]
     cmp eax, 1
@@ -4626,10 +4681,10 @@ op_print_c:
 op_print_str:
     mov r8, [rsi]        # ptr_reg (register number)
     add rsi, 8
-    mov r11, [rdi + r8 * 8]  # check float_bank
+    mov r11, [rbx + r8 * 8]  # check ptr_bank first
     test r11, r11
     jnz 1f
-    mov r11, [rbx + r8 * 8]  # fallback to ptr_bank
+    mov r11, [rdi + r8 * 8]  # fallback to float_bank
 1:
     push rsi
     push rdi
@@ -4842,7 +4897,8 @@ op_to_str:
     sub rsp, 32          # 48 + 32 = 80 bytes (16-byte aligned)
 
     mov rcx, 64
-    call malloc
+    xor edx, edx
+    call gc_malloc
     mov [rsp + 32], rax  # save buffer pointer into stack slot
 
     mov r8, [rsp + 40]   # float bits from stack
@@ -4852,6 +4908,16 @@ op_to_str:
     call sprintf
 
     mov rax, [rsp + 32]  # restore buffer pointer
+    mov rcx, rax
+    call strlen
+    mov r8, rax
+    mov rax, [rsp + 32]
+    mov [rax - 8], r8
+    cvtsi2sd xmm0, r8
+    movsd [rax - 16], xmm0
+    mov r10, 0x535452494E47
+    mov [rax - 32], r10
+
     add rsp, 48          # discard 32 shadow + 2 pushes
     pop r12              # restore dest reg
     pop rbx
@@ -4913,7 +4979,8 @@ op_str_cat:
     push r11
     sub rsp, 32
 
-    call malloc
+    xor edx, edx
+    call gc_malloc
 
     add rsp, 32
     pop r11
@@ -4966,6 +5033,11 @@ op_str_cat:
 .sc_cp2_done:
     lea r13, [r10 + r11]
     mov byte ptr [rax + r13], 0
+    mov r14, 0x535452494E47
+    mov [rax - 32], r14
+    mov [rax - 8], r13
+    cvtsi2sd xmm0, r13
+    movsd [rax - 16], xmm0
 
     mov [rbx + r12 * 8], rax
     mov [rdi + r12 * 8], rax
@@ -5185,6 +5257,11 @@ op_str_sub:
     mov r13, r15
 .ss_done:
     mov byte ptr [rdx + r13], 0
+    mov r10, 0x535452494E47
+    mov [rdx - 32], r10
+    mov [rdx - 8], r13
+    cvtsi2sd xmm0, r13
+    movsd [rdx - 16], xmm0
     mov [rbx + rcx * 8], rdx
     mov [rdi + rcx * 8], rdx
     NEXT
@@ -5203,6 +5280,11 @@ op_str_sub:
     pop rdi
     pop rsi
     mov byte ptr [rax], 0
+    mov r10, 0x535452494E47
+    mov [rax - 32], r10
+    mov qword ptr [rax - 8], 0
+    xorps xmm0, xmm0
+    movsd [rax - 16], xmm0
     mov [rbx + rcx * 8], rax
     mov [rdi + rcx * 8], rax
     NEXT
@@ -5293,6 +5375,11 @@ op_fread:
     pop rdi
     pop rsi
     mov byte ptr [rax + r13], 0
+    mov r10, 0x535452494E47
+    mov [rax - 32], r10
+    mov [rax - 8], r13
+    cvtsi2sd xmm0, r13
+    movsd [rax - 16], xmm0
     mov [rbx + r12 * 8], rax
     mov [rdi + r12 * 8], rax
     NEXT
@@ -5312,6 +5399,11 @@ op_fread:
     pop rdi
     pop rsi
     mov byte ptr [rax], 0
+    mov r10, 0x535452494E47
+    mov [rax - 32], r10
+    mov qword ptr [rax - 8], 0
+    xorps xmm0, xmm0
+    movsd [rax - 16], xmm0
     mov [rbx + r12 * 8], rax
     mov [rdi + r12 * 8], rax
     NEXT
@@ -5362,7 +5454,7 @@ op_file_read_text:
 1:
     test rcx, rcx
     jz .frt_empty
-    lea rdx, [rip + read_mode] # "r"
+    lea rdx, [rip + read_bin_mode] # "rb"
     call fopen
     test rax, rax
     jz .frt_empty
@@ -5393,10 +5485,15 @@ op_file_read_text:
     mov r8, [rsp + 40]          # arg3: count (file size)
     mov r9, [rsp + 32]          # arg4: FILE*
     call fread
+    mov r8, rax                 # actual read count
 
     mov rax, [rsp + 48]
-    mov r8, [rsp + 40]
     mov byte ptr [rax + r8], 0  # null-terminate
+    mov r10, 0x535452494E47     # "STRING" tag
+    mov [rax - 32], r10
+    mov [rax - 8], r8
+    cvtsi2sd xmm0, r8
+    movsd [rax - 16], xmm0
 
     mov rcx, [rsp + 32]         # FILE*
     call fclose
@@ -5419,6 +5516,11 @@ op_file_read_text:
     xor rdx, rdx
     call gc_malloc
     mov byte ptr [rax], 0
+    mov r10, 0x535452494E47
+    mov [rax - 32], r10
+    mov qword ptr [rax - 8], 0
+    xorps xmm0, xmm0
+    movsd [rax - 16], xmm0
     add rsp, 64
     pop r12
     pop rbx
@@ -5452,14 +5554,18 @@ op_file_write_text:
     push r12
     sub rsp, 48
     mov [rsp + 40], rdx         # save text ptr in local slot
-    lea rdx, [rip + write_mode] # "w"
+    lea rdx, [rip + write_bin_mode] # "wb"
     call fopen
     test rax, rax
     jz .fwt_fail
     mov [rsp + 32], rax         # save FILE* in local slot
-    mov rcx, [rsp + 40]         # text ptr (arg1 for fputs)
-    mov rdx, rax                # FILE* (arg2 for fputs)
-    call fputs
+    mov rcx, [rsp + 40]         # text ptr (arg1 for strlen)
+    call strlen
+    mov r8, rax                 # count
+    mov rcx, [rsp + 40]         # text ptr (arg1 for fwrite)
+    mov rdx, 1                  # size
+    mov r9, [rsp + 32]          # FILE*
+    call fwrite
     mov rcx, [rsp + 32]         # FILE*
     call fclose
 .fwt_fail:
@@ -6085,6 +6191,20 @@ op_dict_has_key:
     cmp rax, rdx
     je .dhk_true
 
+    mov r11, 0x7FF0000000000000
+    test rax, r11
+    jnz 1f
+    test rdx, r11
+    jnz 1f
+    cmp rax, 0x10000
+    jb 1f
+    cmp rdx, 0x10000
+    jb 1f
+    mov r11, 0x00007FFFFFFFFFFF
+    cmp rax, r11
+    ja 1f
+    cmp rdx, r11
+    ja 1f
     push r10
     push rdx
     mov r8, rax
@@ -6105,6 +6225,7 @@ op_dict_has_key:
 .dhk_mismatch:
     pop rdx
     pop r10
+1:
     mov r10, [r10 + 16]          # next node
     jmp .dhk_loop
 
@@ -10083,7 +10204,11 @@ op_index_get:
     jb .dict_get_null
 
     cmp qword ptr [rax - 32], 1   # type tag == 1 (Dictionary)?
+    je 3f
+    mov r10, 0x44494354          # "DICT"?
+    cmp [rax - 32], r10
     jne .idx_get_array
+3:
 
     # DICTIONARY GET:
     mov r10, rax
@@ -10137,7 +10262,11 @@ op_index_set:
     jb .idx_set_done
 
     cmp qword ptr [rax - 32], 1   # type tag == 1 (Dictionary)?
+    je 4f
+    mov r10, 0x44494354          # "DICT"?
+    cmp [rax - 32], r10
     jne .idx_set_array
+4:
 
     # DICTIONARY SET:
     mov r14, [rbx + r10 * 8]
