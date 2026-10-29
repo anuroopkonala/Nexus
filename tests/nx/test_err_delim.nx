@@ -1,3 +1,4 @@
-fn foo(a, b {
+fn foo(a, b) {
+    let arr = [1, 2, 3
     return a + b
 }

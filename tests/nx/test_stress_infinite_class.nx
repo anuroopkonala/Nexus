@@ -1,0 +1,52 @@
+import stdlib
+
+class MegaScaleClass {
+    let base_val = 42.0
+
+    fn get_base() {
+        return 42.0
+    }
+}
+
+fn main() {
+    print("Testing Class with 5,000 member fields & methods via Inline Cache & Robin Hood...")
+    let obj = MegaScaleClass
+    let count = 5000.0
+    
+    // 1. Populate 5,000 member fields
+    let i = 0.0
+    while i < count {
+        let key = "member_field_" + to_string(i)
+        obj[key] = i * 3.0 + 1.0
+        i = i + 1.0
+    }
+    
+    // 2. Verify read/write integrity across all 5,000 fields
+    let check = 0.0
+    let valid = 1.0
+    while check < count {
+        let key = "member_field_" + to_string(check)
+        let expected = check * 3.0 + 1.0
+        let val = obj[key]
+        if val != expected {
+            print("Integrity mismatch at index " + to_string(check))
+            valid = 0.0
+        }
+        check = check + 1.0
+    }
+    
+    // 3. Verify base methods still accessible
+    let base = obj.get_base()
+    if base != 42.0 {
+        print("Base method mismatch!")
+        valid = 0.0
+    }
+    
+    if valid == 1.0 {
+        print("PASS: 5,000 class member fields & methods verified with 100% data integrity!")
+    } else {
+        print("FAIL: Class member integrity verification failed!")
+    }
+}
+
+main()

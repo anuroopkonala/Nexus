@@ -68,7 +68,11 @@ $tests = @(
     "tests/vm/test_fused_opcodes.nxasm",
     "tests/vm/test_spill_args.nxasm",
     "tests/vm/test_chunk_jumps.nxasm",
-    "tests/nx/test_unbounded_scale.nx"
+    "tests/nx/test_unbounded_scale.nx",
+    "tests/nx/test_stress_infinite_args.nx",
+    "tests/nx/test_stress_infinite_class.nx",
+    "tests/nx/test_stress_infinite_code.nx",
+    "tests/nx/test_stress_error_recovery.nx"
 )
 
 $passed = 0
@@ -144,6 +148,34 @@ if ($errCode4 -ne 0 -and $errStr4 -match "error\[E0003\]") {
 } else {
     Write-Host " [FAIL]" -ForegroundColor Red
     Write-Host $errStr4
+    $failed++
+}
+
+# Test E0101: Unmatched Parenthesis
+Write-Host "Running tests/nx/test_err_paren.nx (expecting error[E0101])..." -NoNewline
+$errOutP = .\bin\nexus_core.exe tests/nx/test_err_paren.nx 2>&1
+$errCodeP = $LASTEXITCODE
+$errStrP = $errOutP -join "`n"
+if ($errCodeP -ne 0 -and $errStrP -match "error\[E0101\]") {
+    Write-Host " [PASS]" -ForegroundColor Green
+    $passed++
+} else {
+    Write-Host " [FAIL]" -ForegroundColor Red
+    Write-Host $errStrP
+    $failed++
+}
+
+# Test E0004: Malformed Number Literal
+Write-Host "Running tests/nx/test_err_number.nx (expecting error[E0004])..." -NoNewline
+$errOutN = .\bin\nexus_core.exe tests/nx/test_err_number.nx 2>&1
+$errCodeN = $LASTEXITCODE
+$errStrN = $errOutN -join "`n"
+if ($errCodeN -ne 0 -and $errStrN -match "error\[E0004\]") {
+    Write-Host " [PASS]" -ForegroundColor Green
+    $passed++
+} else {
+    Write-Host " [FAIL]" -ForegroundColor Red
+    Write-Host $errStrN
     $failed++
 }
 

@@ -47,7 +47,15 @@ str_rust_syntax_err:
 str_rust_access_err:
     .asciz "\n\033[1;31merror[E0501]\033[0m: \033[1mruntime exception: memory access violation\033[0m\n  \033[1;34m-->\033[0m \033[1;37m%s\033[0m\n   \033[1;34m|\033[0m\n   \033[1;34m=\033[0m \033[1mnote\033[0m: attempted to access unmapped memory or dereference null pointer (RIP=%p)\n   \033[1;34m=\033[0m \033[1mhelp\033[0m: verify object initialization, array bounds, and method availability\n\n"
 str_rust_stack_err:
-    .asciz "\n\033[1;31merror[E0505]\033[0m: \033[1mruntime exception: call stack overflow\033[0m\n  \033[1;34m-->\033[0m \033[1;37m%s\033[0m\n   \033[1;34m|\033[0m\n   \033[1;34m=\033[0m \033[1mnote\033[0m: maximum recursion call depth exceeded (RIP=%p)\n   \033[1;34m=\033[0m \033[1mhelp\033[0m: check for unbounded recursion or missing base case in function calls\n\n"
+    .asciz "\n\033[1;31merror[E0504]\033[0m: \033[1mruntime exception: call stack overflow\033[0m\n  \033[1;34m-->\033[0m \033[1;37m%s\033[0m\n   \033[1;34m|\033[0m\n   \033[1;34m=\033[0m \033[1mnote\033[0m: maximum recursion call depth exceeded (RIP=%p)\n   \033[1;34m=\033[0m \033[1mhelp\033[0m: check for unbounded recursion or missing base case in function calls\n\n"
+vm_exec_rsp: .quad 0
+vm_exec_rbp: .quad 0
+str_veh_access_violation:
+    .asciz "error[E0501]: runtime exception: memory access violation / bounds check"
+str_veh_div_zero:
+    .asciz "error[E0503]: runtime exception: division by zero"
+str_veh_null_unresolved:
+    .asciz "error[E0502]: runtime exception: unresolved method or function call"
 str_rust_illegal_err:
     .asciz "\n\033[1;31merror[E0506]\033[0m: \033[1mruntime exception: illegal instruction\033[0m\n  \033[1;34m-->\033[0m \033[1;37m%s\033[0m\n   \033[1;34m|\033[0m\n   \033[1;34m=\033[0m \033[1mnote\033[0m: CPU encountered an invalid bytecode or instruction (RIP=%p)\n\n"
 str_unresolved_call_err:
@@ -470,6 +478,11 @@ next_fmt: .asciz "Executing: %p\n"
     add rsi, 8
     jmp rax
 .endm
+
+.globl vm_dispatch_entry
+.align 64
+vm_dispatch_entry:
+    NEXT
 
 # --- Phase 1: Fused Microarchitectural Superinstructions ---
 
@@ -2304,9 +2317,9 @@ op_dict_get:
     mov r10, [rdi + r8 * 8]
     
     test r10, r10
-    jz .dict_get_null
+    jz .dict_get_null_check
     cmp r10, 0x10000
-    jb .dict_get_null
+    jb .dict_get_null_check
     mov r11, [rdi + r9 * 8]     # READ KEY FROM FLOAT BANK!
     test r11, r11
     jz .dict_get_not_found
@@ -2468,6 +2481,13 @@ op_dict_get:
     mov [rdx + 16], r11
     mov [rdx + 24], r13
     NEXT
+.dict_get_null_check:
+    mov r11, [rip + try_sp]
+    test r11, r11
+    jz .dict_get_null
+    lea rax, [rip + str_veh_access_violation]
+    mov [rip + thrown_val], rax
+    jmp .has_try_handler
 .dict_get_not_found:
 .dict_get_null:
     xor eax, eax
@@ -2538,10 +2558,7 @@ gc_malloc:
 
     # Set up 48-byte header
     mov qword ptr [rax], 0       # mark bit
-    lea r10, [rip + alloc_head]
-    mov r11, [r10]
-    mov [rax + 8], r11           # next
-    mov [r10], rax               # alloc_head = rax
+    mov qword ptr [rax + 8], 0   # next (arena block)
     mov [rax + 16], rdx          # type tag
     mov [rax + 24], rcx          # capacity
     mov qword ptr [rax + 32], 0  # initial length = 0.0
@@ -2582,10 +2599,7 @@ gc_malloc:
     # Arena reclaimed space after GC!
     mov [rip + arena_bump], r9
     mov qword ptr [rax], 0       # mark bit
-    lea r10, [rip + alloc_head]
-    mov r11, [r10]
-    mov [rax + 8], r11           # next
-    mov [r10], rax               # alloc_head = rax
+    mov qword ptr [rax + 8], 0   # next (arena block)
     mov [rax + 16], rdx          # type tag
     mov [rax + 24], rcx          # capacity
     mov qword ptr [rax + 32], 0  # initial length = 0.0
@@ -2598,7 +2612,7 @@ gc_malloc:
     push rsi
     mov rbx, rcx        # capacity
     mov rsi, rdx        # type tag
-    sub rsp, 40
+    sub rsp, 32
     lea rcx, [rbx + 48]
     call malloc
     mov qword ptr [rax], 0
@@ -2611,7 +2625,7 @@ gc_malloc:
     mov [rax + 8], r9
     mov [r8], rax
     add rax, 48
-    add rsp, 40
+    add rsp, 32
     pop rsi
     pop rbx
     ret
@@ -5267,6 +5281,13 @@ op_call_o:
 .call_o_unresolved:
     dec r11
     mov [r10], r11
+    mov r10, [rip + try_sp]
+    test r10, r10
+    jz .call_o_unresolved_fatal
+    lea rax, [rip + str_veh_null_unresolved]
+    mov [rip + thrown_val], rax
+    jmp .has_try_handler
+.call_o_unresolved_fatal:
     push rsi
     push rdi
     push rbx
@@ -6429,10 +6450,7 @@ op_array_slice:
     # Fast bump success!
     mov [rip + arena_bump], r9
     mov qword ptr [rax], 0
-    lea r10, [rip + alloc_head]
-    mov r11, [r10]
-    mov [rax + 8], r11
-    mov [r10], rax
+    mov qword ptr [rax + 8], 0   # next (arena block)
     mov qword ptr [rax + 16], 3
     mov [rax + 24], rcx
     add rax, 48                  # payload pointer
@@ -10766,7 +10784,12 @@ op_div:
     ucomisd xmm1, xmm2
     jp .div_do_op
     jne .div_do_op
-    jmp .err_div_zero
+    mov r10, [rip + try_sp]
+    test r10, r10
+    jz .err_div_zero
+    lea rax, [rip + str_veh_div_zero]
+    mov [rip + thrown_val], rax
+    jmp .has_try_handler
 .div_do_op:
     movsd xmm0, [rdi + r8 * 8]
     divsd xmm0, xmm1
@@ -11009,9 +11032,9 @@ op_index_get:
     mov rax, [rdi + r8 * 8]
 1:
     test rax, rax
-    jz .dict_get_null
+    jz .idx_null_access
     cmp rax, 0x10000
-    jb .dict_get_null
+    jb .idx_null_access
 
     mov r10, [rax - 32]
     cmp r10, 1
@@ -11044,7 +11067,22 @@ op_index_get:
     jz .dict_get_not_found
     jmp .dict_get_loop_start
 
+.idx_null_access:
+    mov r10, [rip + try_sp]
+    test r10, r10
+    jz .dict_get_null
+    lea rax, [rip + str_veh_access_violation]
+    mov [rip + thrown_val], rax
+    jmp .has_try_handler
+
 .idx_get_oob:
+    mov r10, [rip + try_sp]
+    test r10, r10
+    jz .idx_get_oob_quiet
+    lea rax, [rip + str_veh_access_violation]
+    mov [rip + thrown_val], rax
+    jmp .has_try_handler
+.idx_get_oob_quiet:
     xor eax, eax
     mov [rdi + r12 * 8], rax
     mov [rbx + r12 * 8], rax
@@ -12329,9 +12367,9 @@ crash_handler:
     cmp edx, 0xC00000FD
     je .crash_handle_fatal
     cmp edx, 0xC0000094
-    je .err_div_zero
+    je .crash_handle_fatal
     cmp edx, 0xC000008E
-    je .err_div_zero
+    je .crash_handle_fatal
 
     # Other non-fatal exception -> continue search
     mov dword ptr [rip + in_crash_handler], 0
@@ -12340,6 +12378,68 @@ crash_handler:
     ret
 
 .crash_handle_fatal:
+    # Check if try_sp > 0
+    mov r10, [rip + try_sp]
+    test r10, r10
+    jz .crash_not_in_try
+
+    # Active try frame exists! Safe VEH recovery!
+    cmp edx, 0xC0000094
+    je 1f
+    cmp edx, 0xC000008E
+    je 1f
+    lea rax, [rip + str_veh_access_violation]
+    jmp 2f
+1:
+    lea rax, [rip + str_veh_div_zero]
+2:
+    mov [rip + thrown_val], rax
+
+    # Pop try handler
+    dec r10
+    mov [rip + try_sp], r10
+    lea r11, [rip + try_stack_rsi]
+    mov rax, [r11 + r10 * 8]
+    mov [rip + throw_target_catch_rsi], rax
+
+    lea r11, [rip + try_stack_call_sp]
+    mov rax, [r11 + r10 * 8]
+    mov [rip + throw_target_call_sp], rax
+    mov [rip + call_sp], rax
+
+    lea r11, [rip + try_stack_val_sp]
+    mov rax, [r11 + r10 * 8]
+    mov [rip + throw_target_val_sp], rax
+    mov [rip + val_sp], rax
+
+    # Push thrown_val onto val_stack
+    mov r13, [rip + val_sp]
+    mov rax, [rip + thrown_val]
+    lea r9, [rip + val_stack]
+    mov [r9 + r13 * 8], rax
+    inc r13
+    mov [rip + val_sp], r13
+
+    # Update ContextRecord (rcx + 8)
+    mov rax, [rcx + 8]   # rax = ContextRecord
+    mov r8, [rip + throw_target_catch_rsi]
+    mov [rax + 0xa8], r8 # ContextRecord->Rsi
+    mov rdi, [rip + vm_stack_base]
+    mov [rax + 0xb0], rdi # ContextRecord->Rdi
+    mov [rax + 0x90], rdi # ContextRecord->Rbx
+    mov r10, [rip + vm_exec_rsp]
+    mov [rax + 0x98], r10 # ContextRecord->Rsp
+    mov r10, [rip + vm_exec_rbp]
+    mov [rax + 0xa0], r10 # ContextRecord->Rbp
+    lea r9, [rip + vm_dispatch_entry]
+    mov [rax + 0xf8], r9 # ContextRecord->Rip
+
+    mov dword ptr [rip + in_crash_handler], 0
+    mov eax, -1          # EXCEPTION_CONTINUE_EXECUTION (0xFFFFFFFF)
+    leave
+    ret
+
+.crash_not_in_try:
     mov r14d, edx        # save ExceptionCode in r14d
     mov rax, [rcx + 8]   # rax = ContextRecord
     test rax, rax
@@ -12512,17 +12612,38 @@ main:
     mov [rip + bytecode_chunk_limit], rdx
     mov dword ptr [rip + sock_nonblocking_mode], 1
 
-    # Allocate Fast Bump Arena (512MB)
-    mov rcx, 536870912
-    call malloc
+    # Allocate Fast Bump Arena (512MB) via VirtualAlloc
+    xor ecx, ecx
+    mov edx, 536870912
+    mov r8d, 0x3000
+    mov r9d, 0x04
+    call VirtualAlloc
+    test rax, rax
+    jnz 1f
+    xor ecx, ecx
+    mov edx, 134217728
+    mov r8d, 0x3000
+    mov r9d, 0x04
+    call VirtualAlloc
+    mov edx, 134217728
+1:
     mov [rip + arena_base], rax
     mov [rip + arena_bump], rax
-    add rax, 536870912
+    movsxd rdx, edx
+    add rax, rdx
     mov [rip + arena_limit], rax
 
     # Allocate Scoped Region Bump Arena (64MB)
+    xor ecx, ecx
+    mov edx, 67108864
+    mov r8d, 0x3000
+    mov r9d, 0x04
+    call VirtualAlloc
+    test rax, rax
+    jnz 2f
     mov rcx, 67108864
     call malloc
+2:
     mov [rip + region_arena_base], rax
     mov [rip + region_arena_bump], rax
     add rax, 67108864
@@ -16201,6 +16322,8 @@ fgets:
     pop rdi
     pop rsi
 2:
+    mov [rip + vm_exec_rsp], rsp
+    mov [rip + vm_exec_rbp], rbp
 
     NEXT
 

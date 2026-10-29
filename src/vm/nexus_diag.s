@@ -235,6 +235,27 @@
 .LC23:
 	.ascii "error[E0102]\0"
 	.align 8
+.LC_E0101:
+	.ascii "error[E0101]\0"
+	.align 8
+.LC_E0101_MSG:
+	.ascii "syntax error: unmatched parenthesis\0"
+	.align 8
+.LC_E0004:
+	.ascii "error[E0004]\0"
+	.align 8
+.LC_E0004_MSG:
+	.ascii "lexical error: malformed number literal\0"
+	.align 8
+.LC_E0004_LBL:
+	.ascii "malformed number literal\0"
+	.align 8
+.LC_E0004_NOTE:
+	.ascii "number literal contains multiple decimal points\0"
+	.align 8
+.LC_E0004_HELP:
+	.ascii "ensure number literal is properly formatted, e.g., '3.1415' or '42'\0"
+	.align 8
 .LC24:
 	.ascii "delimiter closing does not match any open delimiter\0"
 	.align 8
@@ -446,8 +467,15 @@
 	lea	rcx, 192[rsp]
 	mov	QWORD PTR 48[rsp], r14
 	mov	QWORD PTR 80[rsp], rcx
+	cmp	edi, 41
+	jne	1f
+	lea	r8, .LC_E0101_MSG[rip]
+	lea	rdx, .LC_E0101[rip]
+	jmp	2f
+1:
 	lea	r8, .LC38[rip]
 	lea	rdx, .LC23[rip]
+2:
 	xor	ecx, ecx
 	mov	QWORD PTR 72[rsp], rax
 	mov	DWORD PTR 40[rsp], r11d
@@ -462,6 +490,53 @@
 	.p2align 4,,10
 	.p2align 3
 .L50:
+	cmp	r8b, 48
+	jl	.not_digit
+	cmp	r8b, 57
+	jg	.not_digit
+	push	r10
+	xor	ecx, ecx
+.scan_num_loop:
+	inc	r10
+	movzx	eax, byte ptr [r10]
+	cmp	al, 48
+	jl	.num_check_dot
+	cmp	al, 57
+	jle	.scan_num_loop
+.num_check_dot:
+	cmp	al, 46
+	jne	.num_scan_done
+	inc	ecx
+	jmp	.scan_num_loop
+.num_scan_done:
+	pop	r10
+	cmp	ecx, 1
+	jle	.not_digit
+	sub	r10, rdi
+	inc	r10d
+	mov	r9, rbx
+	lea	rax, .LC_E0004_HELP[rip]
+	lea	rcx, .LC_E0004_LBL[rip]
+	mov	QWORD PTR 80[rsp], rax
+	mov	QWORD PTR 72[rsp], rcx
+	lea	rax, .LC_E0004_NOTE[rip]
+	mov	QWORD PTR 64[rsp], rax
+	mov	DWORD PTR 56[rsp], 8
+	mov	QWORD PTR 48[rsp], rdi
+	mov	DWORD PTR 40[rsp], r10d
+	mov	DWORD PTR 32[rsp], r11d
+	lea	r8, .LC_E0004_MSG[rip]
+	lea	rdx, .LC_E0004[rip]
+	xor	ecx, ecx
+	call	"print_diagnostic"
+	mov	rcx, rsi
+	call	"free"
+	mov	rsi, QWORD PTR 272[rsp]
+	mov	rbp, QWORD PTR 288[rsp]
+	mov	r15, QWORD PTR 304[rsp]
+	mov	eax, 1
+	jmp	.L43
+.not_digit:
 	cmp	r8b, 34
 	je	.L199
 	cmp	r8b, 61
@@ -514,10 +589,17 @@
 	sub	r10, rdi
 	mov	QWORD PTR 80[rsp], rcx
 	xor	ecx, ecx
-	lea	r8, .LC22[rip]
 	add	r10d, 1
 	mov	QWORD PTR 72[rsp], rax
+	cmp	DWORD PTR 104[rsp], 41
+	jne	3f
+	lea	r8, .LC_E0101_MSG[rip]
+	lea	rdx, .LC_E0101[rip]
+	jmp	4f
+3:
+	lea	r8, .LC22[rip]
 	lea	rdx, .LC23[rip]
+4:
 	mov	DWORD PTR 56[rsp], 1
 	mov	QWORD PTR 48[rsp], rdi
 	mov	DWORD PTR 40[rsp], r10d

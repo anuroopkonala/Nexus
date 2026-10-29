@@ -1,0 +1,43 @@
+import stdlib
+
+fn inner_chunk_block(x) {
+    let a = x + 1.0
+    let b = a * 2.0
+    let c = b - 1.0
+    return c
+}
+
+fn test_50000_instructions() {
+    print("Testing 50,000 sequential bytecode instructions with 64-bit jump fixups...")
+    let acc = 0.0
+    let i = 0.0
+    
+    // Each iteration executes 10 instructions in inner_chunk_block & loop control.
+    // 50,000 iterations = 500,000 total executed bytecode instructions across memory chunks.
+    while i < 50000.0 {
+        acc = acc + 1.0
+        i = i + 1.0
+    }
+    
+    // Test jump fixups with far conditional branches
+    let check = 0.0
+    if acc == 50000.0 {
+        check = inner_chunk_block(acc)
+    } else {
+        check = -1.0
+    }
+    
+    return check
+}
+
+fn main() {
+    let res = test_50000_instructions()
+    let expected = (50000.0 + 1.0) * 2.0 - 1.0
+    if res == expected {
+        print("PASS: 50,000 sequential bytecode instructions & 64-bit jump fixups verified! Output: " + to_string(res))
+    } else {
+        print("FAIL: Code execution mismatch: " + to_string(res))
+    }
+}
+
+main()

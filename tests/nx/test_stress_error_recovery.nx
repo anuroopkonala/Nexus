@@ -1,0 +1,66 @@
+import stdlib
+
+fn test_div_zero() {
+    let caught = 0.0
+    try {
+        let x = 100.0 / 0.0
+    } catch (err) {
+        System.print_str("1. Intercepted division by zero: " + err)
+        caught = 1.0
+    }
+    return caught
+}
+
+fn test_null_access() {
+    let caught = 0.0
+    try {
+        let p = null
+        let v = p[0]
+    } catch (err) {
+        System.print_str("2. Intercepted null pointer access: " + err)
+        caught = 1.0
+    }
+    return caught
+}
+
+fn test_bounds_overflow() {
+    let caught = 0.0
+    try {
+        let arr = [10.0, 20.0, 30.0]
+        let item = arr[99999]
+    } catch (err) {
+        System.print_str("3. Intercepted array bounds overflow: " + err)
+        caught = 1.0
+    }
+    return caught
+}
+
+fn test_unresolved_call() {
+    let caught = 0.0
+    try {
+        let obj = {}
+        obj.undefined_method_xyz()
+    } catch (err) {
+        System.print_str("4. Intercepted unresolved call: " + err)
+        caught = 1.0
+    }
+    return caught
+}
+
+fn main() {
+    System.print_str("Testing Extreme Error Recovery & Hardware SEH Containment...")
+    
+    let c1 = test_div_zero()
+    let c2 = test_null_access()
+    let c3 = test_bounds_overflow()
+    let c4 = test_unresolved_call()
+    
+    let total = c1 + c2 + c3 + c4
+    if total == 4.0 {
+        System.print_str("PASS: All 4 runtime exceptions intercepted cleanly with 0 crashes!")
+    } else {
+        System.print_str("FAIL: Not all exceptions intercepted! Total caught: " + to_string(total))
+    }
+}
+
+main()
