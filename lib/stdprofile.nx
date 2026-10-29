@@ -1,0 +1,59 @@
+import stdlib
+
+// ==============================================================================
+// Nexus Baremetal - stdprofile: Hardware Profiling & Resource Metrics Engine
+// Sub-nanosecond CPU cycle latency (RDTSC) and GPU VRAM tracking
+// ==============================================================================
+
+class ProfileRecord {
+    fn create(op_name, total_cycles, vram_delta_bytes, exec_count) {
+        let rec = {}
+        rec["name"] = op_name
+        rec["total_cycles"] = total_cycles
+        rec["vram_bytes"] = vram_delta_bytes
+        rec["count"] = exec_count
+        rec["avg_cycles"] = total_cycles / exec_count
+        return rec
+    }
+}
+
+class Profiler {
+    fn benchmark(benchmark_name, iterations_count, target_fn) {
+        let vram_start = 0.0
+        let mem_start = gpu_dispatch(50.0, [])
+        if mem_start != 0.0 {
+            vram_start = mem_start[1]
+        }
+
+        let start_cycles = System.cpu_cycles()
+
+        let iter_idx = 0
+        while iter_idx < iterations_count {
+            target_fn()
+            iter_idx = iter_idx + 1
+        }
+
+        let stop_cycles = System.cpu_cycles()
+        let cycles_used = stop_cycles - start_cycles
+
+        let vram_end = 0.0
+        let mem_end = gpu_dispatch(50.0, [])
+        if mem_end != 0.0 {
+            vram_end = mem_end[1]
+        }
+        let vram_diff = vram_start - vram_end
+
+        return ProfileRecord.create(benchmark_name, cycles_used, vram_diff, iterations_count)
+    }
+
+    fn print_summary(prof_record) {
+        System.print_str("------------------------------------------------------------------")
+        System.print_str("NEXUS HARDWARE PROFILER METRICS: " + prof_record["name"])
+        System.print_str("------------------------------------------------------------------")
+        System.print_str("  Iterations:       " + to_string(prof_record["count"]))
+        System.print_str("  Total CPU Cycles: " + to_string(prof_record["total_cycles"]))
+        System.print_str("  Avg Cycles/Op:    " + to_string(prof_record["avg_cycles"]))
+        System.print_str("  VRAM Delta:       " + to_string(prof_record["vram_bytes"]) + " bytes")
+        System.print_str("------------------------------------------------------------------")
+    }
+}

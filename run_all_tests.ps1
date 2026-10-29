@@ -55,7 +55,15 @@ $tests = @(
     "tests/nx/test_generational_safety.nx",
     "tests/nx/test_fibers.nx",
     "tests/nx/test_lockfree_channels.nx",
-    "tests/nx/test_async_iocp.nx"
+    "tests/nx/test_async_iocp.nx",
+    "tests/nx/test_autograd_dag.nx",
+    "tests/nx/test_flash_attention.nx",
+    "tests/nx/test_quant_gemm.nx",
+    "tests/nx/test_gguf_llm.nx",
+    "tests/nx/test_lsp.nx",
+    "tests/nx/test_repl_kernel.nx",
+    "tests/nx/test_nxdb_profiler.nx",
+    "tests/nx/test_nxpkg.nx"
 )
 
 $passed = 0

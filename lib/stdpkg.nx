@@ -1,0 +1,113 @@
+import stdlib
+
+// ==============================================================================
+// Nexus Baremetal - stdpkg: Decentralized Package Manager & Integrity Engine
+// Cryptographic verification using native SHA-256 and AES/XOR cipher engines
+// Manifest (nexus.pkg) and cryptographic tamper-proof lockfile (nexus.lock)
+// ==============================================================================
+
+class PackageManifest {
+    fn create(pkg_name, pkg_version, pkg_license) {
+        let m = {}
+        m["name"] = pkg_name
+        m["version"] = pkg_version
+        m["license"] = pkg_license
+        m["dependencies"] = {}
+        return m
+    }
+
+    fn add_dependency(manifest, dep_name, dep_version) {
+        let deps = manifest["dependencies"]
+        deps[dep_name] = dep_version
+        manifest["dependencies"] = deps
+        return manifest
+    }
+}
+
+class PackageLockfile {
+    fn create_empty() {
+        let l = {}
+        l["version"] = "1.0.0"
+        l["packages"] = {}
+        return l
+    }
+
+    fn record_module(lockfile, mod_name, mod_file_path, mod_content) {
+        let hash_val = Crypto.sha256(mod_content)
+        let entry = {}
+        entry["name"] = mod_name
+        entry["path"] = mod_file_path
+        entry["sha256"] = hash_val
+        entry["bytes"] = mod_content.len()
+
+        let pkgs = lockfile["packages"]
+        pkgs[mod_name] = entry
+        lockfile["packages"] = pkgs
+        return entry
+    }
+
+    fn verify_integrity(lockfile, current_files_dict) {
+        let pkgs = lockfile["packages"]
+        let names = pkgs.keys()
+        let total_verified = 0.0
+
+        let i = 0
+        while i < names.len() {
+            let m_name = names[i]
+            let expected_entry = pkgs[m_name]
+            let expected_hash = expected_entry["sha256"]
+            let m_path = expected_entry["path"]
+
+            if current_files_dict.has_key(m_path) == 0.0 {
+                let err_res = {}
+                err_res["status"] = "MISSING_FILE"
+                err_res["module"] = m_name
+                err_res["path"] = m_path
+                return err_res
+            }
+
+            let actual_content = current_files_dict[m_path]
+            let actual_hash = Crypto.sha256(actual_content)
+
+            if actual_hash != expected_hash {
+                let err_tamper = {}
+                err_tamper["status"] = "TAMPERED_CHECKSUM"
+                err_tamper["module"] = m_name
+                err_tamper["path"] = m_path
+                err_tamper["expected"] = expected_hash
+                err_tamper["actual"] = actual_hash
+                return err_tamper
+            }
+
+            total_verified = total_verified + 1.0
+            i = i + 1
+        }
+
+        let ok_res = {}
+        ok_res["status"] = "VERIFIED"
+        ok_res["verified_count"] = total_verified
+        return ok_res
+    }
+}
+
+class PackageBundler {
+    fn create_bundle(manifest, source_files_dict) {
+        let bundle_header = "NEXUS_PKG_ARCHIVE_V1:" + manifest["name"] + "@" + manifest["version"] + "\n"
+        let bundle_body = ""
+        let file_paths = source_files_dict.keys()
+
+        let f = 0
+        while f < file_paths.len() {
+            let p = file_paths[f]
+            let content = source_files_dict[p]
+            let h = Crypto.sha256(content)
+            let section = "--- FILE:" + p + "|SHA256:" + h + " ---\n" + content + "\n"
+            bundle_body = bundle_body + section
+            f = f + 1
+        }
+
+        let full_archive = bundle_header + bundle_body
+        let b64_archive = full_archive.base64_encode()
+        return b64_archive
+    }
+}

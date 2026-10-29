@@ -192,6 +192,7 @@ str_HEX_DECODE: .asciz "HEX_DECODE"
 str_XOR_MASK: .asciz "XOR_MASK"
 str_SYS_ARGS: .asciz "SYS_ARGS"
 str_SYS_TIME_MS: .asciz "SYS_TIME_MS"
+str_SYS_CPU_CYCLES: .asciz "SYS_CPU_CYCLES"
 str_SYS_GET_ENV: .asciz "SYS_GET_ENV"
 str_SYS_SET_ENV: .asciz "SYS_SET_ENV"
 str_SYS_EXEC: .asciz "SYS_EXEC"
@@ -6282,6 +6283,7 @@ op_dict_keys:
     mov [rax - 32], r11
     cvtsi2sd xmm0, r10
     movsd [rax - 16], xmm0       # set length
+    mov [rax - 8], r10           # fast integer array length
 
     xor r8, r8
     mov r11, [rcx + 8]           # list head
@@ -6317,6 +6319,7 @@ op_dict_keys:
     mov [rax - 32], r11
     xorps xmm0, xmm0
     movsd [rax - 16], xmm0
+    mov qword ptr [rax - 8], 0
     mov [rbx + r12 * 8], rax
     mov [rdi + r12 * 8], rax
     NEXT
@@ -6366,6 +6369,7 @@ op_dict_values:
     mov [rax - 32], r11
     cvtsi2sd xmm0, r10
     movsd [rax - 16], xmm0       # set length
+    mov [rax - 8], r10           # fast integer array length
 
     xor r8, r8
     mov r11, [rcx + 8]           # list head
@@ -6401,6 +6405,7 @@ op_dict_values:
     mov [rax - 32], r11
     xorps xmm0, xmm0
     movsd [rax - 16], xmm0
+    mov qword ptr [rax - 8], 0
     mov [rbx + r12 * 8], rax
     mov [rdi + r12 * 8], rax
     NEXT
@@ -7869,6 +7874,7 @@ op_sys_args:
     mov [rax - 32], r10          # "ARRAY" type tag
     cvtsi2sd xmm0, rcx
     movsd [rax - 16], xmm0       # length
+    mov [rax - 8], rcx           # fast integer array length
 
     # Populate array with strdup'd arguments
     xor edx, edx         # j = 0
@@ -7945,6 +7951,7 @@ op_sys_args:
     mov [rax - 32], r10
     xorps xmm0, xmm0
     movsd [rax - 16], xmm0
+    mov qword ptr [rax - 8], 0
     mov [rbx + r12 * 8], rax
     mov [rdi + r12 * 8], rax
     NEXT
@@ -7982,6 +7989,16 @@ op_sys_time_ms:
     pop rdi
     pop rsi
 
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_sys_cpu_cycles:
+    mov r12, [rsi]       # dest
+    add rsi, 8
+    rdtsc
+    shl rdx, 32
+    or rax, rdx
+    cvtsi2sd xmm0, rax
     movsd [rdi + r12 * 8], xmm0
     NEXT
 
@@ -10263,8 +10280,8 @@ op_index_set:
 
     cmp qword ptr [rax - 32], 1   # type tag == 1 (Dictionary)?
     je 4f
-    mov r10, 0x44494354          # "DICT"?
-    cmp [rax - 32], r10
+    mov rcx, 0x44494354          # "DICT"?
+    cmp [rax - 32], rcx
     jne .idx_set_array
 4:
 
@@ -14272,8 +14289,17 @@ fgets:
     lea rdx, [rip + str_SYS_TIME_MS]
     call strcmp
     test eax, eax
-    jne .check_GET_OP_SYS_GET_ENV
+    jne .check_GET_OP_SYS_CPU_CYCLES
     lea r15, [rip + op_sys_time_ms]
+    jmp .get_op_found
+
+.check_GET_OP_SYS_CPU_CYCLES:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_SYS_CPU_CYCLES]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_SYS_GET_ENV
+    lea r15, [rip + op_sys_cpu_cycles]
     jmp .get_op_found
 
 .check_GET_OP_SYS_GET_ENV:

@@ -1,0 +1,188 @@
+import stdlib
+
+// ==============================================================================
+// Nexus Baremetal: nxdb - Source-Level Interactive Debugger
+// Breakpoints, source stepping, variable inspection, and call stack backtracing
+// Designed for CLI interactive debugging and integration with IDE debuggers
+// ==============================================================================
+
+class Breakpoint {
+    fn create(bp_id, src_file, line_num) {
+        let bp = {}
+        bp["id"] = bp_id
+        bp["file"] = src_file
+        bp["line"] = line_num
+        bp["hits"] = 0.0
+        bp["enabled"] = 1.0
+        return bp
+    }
+}
+
+class StackFrame {
+    fn create(frame_idx, fn_name, src_file, line_num) {
+        let f = {}
+        f["index"] = frame_idx
+        f["name"] = fn_name
+        f["file"] = src_file
+        f["line"] = line_num
+        return f
+    }
+}
+
+class NXDBState {
+    fn create() {
+        let st = {}
+        st["bp_counter"] = 1.0
+        st["breakpoints"] = []
+        st["stack_frames"] = []
+        st["locals"] = {}
+        st["current_file"] = "main.nx"
+        st["current_line"] = 1.0
+        st["status"] = "STOPPED"
+        return st
+    }
+}
+
+class NXDBEngine {
+    fn add_breakpoint(db_state, src_file, line_num) {
+        let cur_id = db_state["bp_counter"]
+        db_state["bp_counter"] = cur_id + 1.0
+        let new_bp = Breakpoint.create(cur_id, src_file, line_num)
+        let bps = db_state["breakpoints"]
+        db_state["breakpoints"] = bps.push(new_bp)
+        return new_bp
+    }
+
+    fn push_frame(db_state, fn_name, src_file, line_num) {
+        let frames = db_state["stack_frames"]
+        let f_idx = frames.len()
+        let new_frame = StackFrame.create(f_idx, fn_name, src_file, line_num)
+        db_state["stack_frames"] = frames.push(new_frame)
+        db_state["current_file"] = src_file
+        db_state["current_line"] = line_num
+        return new_frame
+    }
+
+    fn pop_frame(db_state) {
+        let frames = db_state["stack_frames"]
+        if frames.len() > 0 {
+            let last_f = frames.pop()
+            if frames.len() > 0 {
+                let top_f = frames[frames.len() - 1]
+                db_state["current_file"] = top_f["file"]
+                db_state["current_line"] = top_f["line"]
+            }
+            return last_f
+        }
+        return 0
+    }
+
+    fn has_breakpoint_at(db_state, src_file, line_num) {
+        let bps = db_state["breakpoints"]
+        let b_idx = 0
+        while b_idx < bps.len() {
+            let cur_b = bps[b_idx]
+            if cur_b["file"] == src_file && cur_b["line"] == line_num && cur_b["enabled"] == 1.0 {
+                let hit_cnt = cur_b["hits"] + 1.0
+                cur_b["hits"] = hit_cnt
+                return 1.0
+            }
+            b_idx = b_idx + 1
+        }
+        return 0.0
+    }
+
+    fn format_backtrace(db_state) {
+        let bt_str = "Call Stack Backtrace:\n"
+        let frames = db_state["stack_frames"]
+        let f_idx = 0
+        while f_idx < frames.len() {
+            let cur_f = frames[f_idx]
+            let line_desc = "  #" + to_string(cur_f["index"]) + " " + cur_f["name"] + " at " + cur_f["file"] + ":" + to_string(cur_f["line"]) + "\n"
+            bt_str = bt_str + line_desc
+            f_idx = f_idx + 1
+        }
+        return bt_str
+    }
+
+    fn format_source_listing(src_text, cur_line, bp_lines_array) {
+        let listing = ""
+        let lines = src_text.split("\n")
+        let l = 0
+        while l < lines.len() {
+            let line_no = l + 1.0
+            let mark = "   "
+            if line_no == cur_line {
+                mark = " > "
+            }
+            let is_bp = 0.0
+            let b = 0
+            while b < bp_lines_array.len() {
+                if bp_lines_array[b] == line_no {
+                    is_bp = 1.0
+                }
+                b = b + 1
+            }
+            if is_bp == 1.0 {
+                mark = " * "
+            }
+            if line_no == cur_line && is_bp == 1.0 {
+                mark = " *>"
+            }
+            listing = listing + mark + to_string(line_no) + " | " + lines[l] + "\n"
+            l = l + 1
+        }
+        return listing
+    }
+
+    fn dispatch_command(cmd_text, db_state) {
+        let words = cmd_text.split(" ")
+        let action = words[0]
+
+        if action == "b" || action == "break" {
+            if words.len() >= 2 {
+                let line_str = words[1]
+                let target_line = gpu_dispatch(65.0, [line_str])
+                let bp = NXDBEngine.add_breakpoint(db_state, db_state["current_file"], target_line)
+                return "Breakpoint " + to_string(bp["id"]) + " set at " + bp["file"] + ":" + to_string(bp["line"])
+            }
+            return "Usage: break <line>"
+        }
+
+        if action == "bt" || action == "backtrace" {
+            return NXDBEngine.format_backtrace(db_state)
+        }
+
+        if action == "p" || action == "print" {
+            if words.len() >= 2 {
+                let v_name = words[1]
+                let locs = db_state["locals"]
+                if locs.has_key(v_name) {
+                    return v_name + " = " + to_string(locs[v_name])
+                }
+                return "Variable not found: " + v_name
+            }
+            return "Usage: print <var>"
+        }
+
+        if action == "c" || action == "continue" {
+            db_state["status"] = "RUNNING"
+            return "Continuing execution..."
+        }
+
+        if action == "s" || action == "step" {
+            let next_l = db_state["current_line"] + 1.0
+            db_state["current_line"] = next_l
+            return "Stepped to " + db_state["current_file"] + ":" + to_string(next_l)
+        }
+
+        return "Unknown command: " + action
+    }
+}
+
+fn main() {
+    System.print_str("nxdb: Nexus Baremetal Interactive Source Debugger (v1.0.0)")
+    System.print_str("Type 'help' for debugger command listing.")
+}
+
+main()

@@ -20,6 +20,10 @@ class System {
         return time_ms()
     }
 
+    fn cpu_cycles() {
+        return cpu_cycles()
+    }
+
     fn get_env(key) {
         return get_env(key)
     }
@@ -268,25 +272,30 @@ class String {
     fn trim(str) {
         let n = len(str)
         if n == 0 { return "" }
-        let start = 0
-        while start < n {
-            let ch = substring(str, start, 1)
+        let start_pos = 0
+        let scanning = 1
+        while start_pos < n && scanning == 1 {
+            let ch = substring(str, start_pos, start_pos + 1)
             if ch != " " && ch != "\t" && ch != "\r" && ch != "\n" {
-                break
+                scanning = 0
+            } else {
+                start_pos = start_pos + 1
             }
-            start += 1
         }
-        if start >= n { return "" }
-        let end = n - 1
-        while end >= start {
-            let ch = substring(str, end, 1)
-            if ch != " " && ch != "\t" && ch != "\r" && ch != "\n" {
-                break
+        if start_pos >= n { return "" }
+        let end_pos = n
+        let scanning_end = 1
+        while end_pos > start_pos && scanning_end == 1 {
+            let ch_end = substring(str, end_pos - 1, end_pos)
+            if ch_end != " " && ch_end != "\t" && ch_end != "\r" && ch_end != "\n" {
+                scanning_end = 0
+            } else {
+                end_pos = end_pos - 1
             }
-            end -= 1
         }
-        return substring(str, start, end - start + 1)
+        return substring(str, start_pos, end_pos)
     }
+
 
     fn replace(str, target, replacement) {
         let parts = split(str, target)
