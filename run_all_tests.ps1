@@ -65,7 +65,10 @@ $tests = @(
     "tests/nx/test_nxdb_profiler.nx",
     "tests/nx/test_nxpkg.nx",
     "tests/nx/test_micro_opt.nx",
-    "tests/vm/test_fused_opcodes.nxasm"
+    "tests/vm/test_fused_opcodes.nxasm",
+    "tests/vm/test_spill_args.nxasm",
+    "tests/vm/test_chunk_jumps.nxasm",
+    "tests/nx/test_unbounded_scale.nx"
 )
 
 $passed = 0

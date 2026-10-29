@@ -1,0 +1,36 @@
+# Test Phase 2: Dynamic Spill Buffers for Unbounded Arguments
+# Setup values in registers
+LOAD 100.0 1
+LOAD 200.0 2
+LOAD 300.0 3
+LOAD 400.0 4
+
+# Push arguments into spill buffer
+PUSH_SPILL_ARG 1
+PUSH_SPILL_ARG 2
+PUSH_SPILL_ARG 3
+PUSH_SPILL_ARG 4
+
+# Set spill base for a 4-argument frame
+SET_SPILL_BASE 4
+
+# Load spill arguments into registers 10, 11, 12, 13
+LOAD_SPILL_ARG 10 0
+LOAD_SPILL_ARG 11 1
+LOAD_SPILL_ARG 12 2
+LOAD_SPILL_ARG 13 3
+
+# Verify by printing loaded arguments
+PRINT 10
+PRINT 11
+PRINT 12
+PRINT 13
+
+# Clear spill arguments
+CLEAR_SPILL_ARGS
+
+# Load from cleared buffer (should safely yield 0.0)
+LOAD_SPILL_ARG 14 0
+PRINT 14
+
+HALT

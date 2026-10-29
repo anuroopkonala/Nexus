@@ -364,6 +364,27 @@ str_FUSED_JMP_LT: .asciz "FUSED_JMP_LT"
 str_FUSED_INC_STORE: .asciz "FUSED_INC_STORE"
 str_FUSED_FASTCALL_2: .asciz "FUSED_FASTCALL_2"
 
+# --- Phase 2: Unbounded Scale Engine Strings ---
+str_PUSH_SPILL_ARG: .asciz "PUSH_SPILL_ARG"
+str_LOAD_SPILL_ARG: .asciz "LOAD_SPILL_ARG"
+str_SET_SPILL_BASE: .asciz "SET_SPILL_BASE"
+str_CLEAR_SPILL_ARGS: .asciz "CLEAR_SPILL_ARGS"
+
+str_JMP_REL32: .asciz "JMP_REL32"
+str_JMP_FAR64: .asciz "JMP_FAR64"
+str_CALL_FAR64: .asciz "CALL_FAR64"
+
+# --- Phase 2: Dynamic Spill Buffers & 64-bit Chunk Streams ---
+.align 16
+arg_spill_buf:   .quad 0
+arg_spill_count: .quad 0
+arg_spill_cap:   .quad 0
+arg_spill_base:  .quad 0
+
+bytecode_chunk_table: .space 8192
+bytecode_chunk_count: .quad 1
+bytecode_chunk_limit: .quad 0
+
 
 
 
@@ -569,6 +590,558 @@ op_fused_fastcall_2:
     mov rsi, r8
 .fastcall_done:
     NEXT
+
+# --- Phase 2: Unbounded Scale Engine Handlers ---
+
+.globl hash_key64
+hash_key64:
+    mov rax, 0x7FF0000000000000
+    test rcx, rax
+    jnz .hk_scalar
+    cmp rcx, 0x10000
+    jb .hk_scalar
+    mov rax, 0x00007FFFFFFFFFFF
+    cmp rcx, rax
+    ja .hk_scalar
+    mov rax, 0xcbf29ce484222325
+    mov r8,  0x100000001b3
+.hk_str_loop:
+    movzx edx, byte ptr [rcx]
+    test dl, dl
+    jz .hk_finish
+    xor rax, rdx
+    imul rax, r8
+    inc rcx
+    jmp .hk_str_loop
+.hk_scalar:
+    mov rax, rcx
+    mov rdx, 0xcbf29ce484222325
+    xor rax, rdx
+    mov r8,  0x100000001b3
+    imul rax, r8
+.hk_finish:
+    test rax, rax
+    jnz .hk_done
+    mov rax, 1
+.hk_done:
+    ret
+
+.globl robin_hood_insert_entry
+robin_hood_insert_entry:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push rsi
+    push rdi
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 40
+
+    mov r12, rcx                 # dict_ptr
+    mov r13, rdx                 # node_ptr
+    mov rcx, [r13]               # key
+    call hash_key64
+    mov r14, rax                 # hash
+    mov r15, [r13]               # key
+    xor r11d, r11d               # dist = 0
+
+    mov rbx, [r12 + 144]         # table_ptr
+    mov r9,  [r12 + 152]         # mask
+    mov r10, r14
+    and r10, r9                  # slot = hash & mask
+
+.rhie_loop:
+    mov rdi, r10
+    shl rdi, 5                   # rdi = slot * 32
+    add rdi, rbx                 # rdi = table + slot * 32
+    mov rax, [rdi]               # slot_hash
+    test rax, rax
+    jnz .rhie_occupied
+
+    # Empty slot: place entry here
+    mov [rdi], r14
+    mov [rdi + 8], r15
+    mov [rdi + 16], r13
+    mov [rdi + 24], r11
+    inc qword ptr [r12 + 168]
+    jmp .rhie_done
+
+.rhie_occupied:
+    cmp rax, r14
+    jne .rhie_check_swap
+    mov rcx, [rdi + 8]
+    cmp rcx, r15
+    je .rhie_update_existing
+
+.rhie_check_swap:
+    mov rax, [rdi + 24]          # slot_dist
+    cmp rax, r11
+    jae .rhie_next_slot
+
+    # Robin-Hood swap! Rich gives to poor!
+    xchg r14, [rdi]
+    xchg r15, [rdi + 8]
+    xchg r13, [rdi + 16]
+    xchg r11, [rdi + 24]
+
+.rhie_next_slot:
+    inc r11                      # dist++
+    inc r10                      # slot++
+    and r10, r9                  # slot &= mask
+    jmp .rhie_loop
+
+.rhie_update_existing:
+    mov [rdi + 16], r13
+
+.rhie_done:
+    add rsp, 40
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rdi
+    pop rsi
+    pop rbx
+    leave
+    ret
+
+.globl robin_hood_insert
+robin_hood_insert:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push rsi
+    push rdi
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 40
+
+    mov r12, rcx                 # r12 = dict_ptr
+    mov r13, rdx                 # r13 = node_ptr
+
+    mov rbx, [r12 + 144]         # rbx = table_ptr
+    test rbx, rbx
+    jnz .rhi_have_table
+
+    # Allocate initial table: cap = 256, 32 bytes per slot = 8192 bytes
+    mov rcx, 256
+    mov rdx, 32
+    call calloc
+    mov rbx, rax
+    mov [r12 + 144], rbx
+    mov qword ptr [r12 + 152], 255
+    mov qword ptr [r12 + 160], 256
+    mov qword ptr [r12 + 168], 0
+
+    # Insert all existing nodes from linked list [r12 + 8]
+    mov rsi, [r12 + 8]
+.rhi_init_loop:
+    test rsi, rsi
+    jz .rhi_have_table
+    cmp rsi, r13
+    je .rhi_init_next
+    mov rcx, r12
+    mov rdx, rsi
+    call robin_hood_insert_entry
+.rhi_init_next:
+    mov rsi, [rsi + 16]
+    jmp .rhi_init_loop
+
+.rhi_have_table:
+    # Check load factor: count * 4 > cap * 3 -> double table
+    mov rax, [r12 + 168]
+    shl rax, 2                   # count * 4
+    mov rcx, [r12 + 160]
+    lea rdx, [rcx + rcx * 2]     # cap * 3
+    cmp rax, rdx
+    jbe .rhi_do_insert
+
+    # Double table capacity
+    shl rcx, 1                   # new_cap = cap * 2
+    mov r14, rcx                 # r14 = new_cap
+    mov rdx, 32
+    call calloc                  # Clean aligned call, rcx=new_cap, rdx=32
+    test rax, rax
+    jz .rhi_do_insert            # Safety fallback
+
+    mov r15, [r12 + 144]         # r15 = old_table
+    mov [r12 + 144], rax         # new_table
+    mov rcx, r14
+    dec rcx
+    mov [r12 + 152], rcx         # new_mask = new_cap - 1
+    mov [r12 + 160], r14         # new_cap
+    mov qword ptr [r12 + 168], 0 # reset count for re-insertion
+
+    # Rehash all nodes from linked list into new table
+    mov rsi, [r12 + 8]
+.rhi_grow_loop:
+    test rsi, rsi
+    jz .rhi_grow_done
+    cmp rsi, r13
+    je .rhi_grow_next
+    mov rcx, r12
+    mov rdx, rsi
+    call robin_hood_insert_entry # Clean aligned call
+.rhi_grow_next:
+    mov rsi, [rsi + 16]
+    jmp .rhi_grow_loop
+
+.rhi_grow_done:
+    test r15, r15
+    jz .rhi_do_insert
+    mov rcx, r15                 # rcx = old_table
+    call free                    # Clean aligned call
+
+.rhi_do_insert:
+    mov rcx, r12
+    mov rdx, r13
+    call robin_hood_insert_entry
+
+    add rsp, 40
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rdi
+    pop rsi
+    pop rbx
+    leave
+    ret
+
+.globl robin_hood_lookup
+robin_hood_lookup:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push rsi
+    push rdi
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 40
+
+    mov r12, rcx                 # dict_ptr
+    mov r15, rdx                 # key
+    mov rcx, rdx
+    call hash_key64
+    mov r14, rax                 # hash
+    xor r11d, r11d               # dist = 0
+
+    mov rbx, [r12 + 144]
+    test rbx, rbx
+    jz .rhl_not_found
+    mov r9, [r12 + 152]          # mask
+    mov r10, r14
+    and r10, r9                  # slot = hash & mask
+
+.rhl_loop:
+    mov rdi, r10
+    shl rdi, 5                   # slot * 32
+    add rdi, rbx                 # table + slot * 32
+    mov rax, [rdi]               # slot_hash
+    test rax, rax
+    jz .rhl_not_found
+
+    mov rdx, [rdi + 24]          # slot_dist
+    cmp r11, rdx
+    ja .rhl_not_found            # Robin-Hood invariant: dist > slot_dist => not in table
+
+    cmp rax, r14
+    jne .rhl_next
+    mov rsi, [rdi + 8]           # slot_key
+    cmp rsi, r15
+    je .rhl_found
+
+    # Test string equality with strcmp if pointers
+    mov rax, 0x7FF0000000000000
+    test r15, rax
+    jnz .rhl_next
+    test rsi, rax
+    jnz .rhl_next
+    cmp r15, 0x10000
+    jb .rhl_next
+    cmp rsi, 0x10000
+    jb .rhl_next
+    mov rax, 0x00007FFFFFFFFFFF
+    cmp r15, rax
+    ja .rhl_next
+    cmp rsi, rax
+    ja .rhl_next
+
+    push r11
+    push r10
+    push r9
+    sub rsp, 40
+    mov rcx, rsi
+    mov rdx, r15
+    call strcmp
+    add rsp, 40
+    pop r9
+    pop r10
+    pop r11
+    test eax, eax
+    jz .rhl_found
+
+.rhl_next:
+    mov rbx, [r12 + 144]
+    inc r11
+    inc r10
+    and r10, r9
+    cmp r11, 256
+    ja .rhl_not_found
+    jmp .rhl_loop
+
+.rhl_found:
+    mov rax, [rdi + 16]          # return node_ptr
+    jmp .rhl_ret
+
+.rhl_not_found:
+    xor eax, eax
+
+.rhl_ret:
+    add rsp, 40
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rdi
+    pop rsi
+    pop rbx
+    leave
+    ret
+
+.globl op_push_spill_arg
+.align 64
+op_push_spill_arg:
+    mov r8, [rsi]
+    add rsi, 8
+    mov rax, [rip + arg_spill_buf]
+    test rax, rax
+    jnz 1f
+    push rsi
+    push rdi
+    push rbx
+    push r8
+    sub rsp, 32
+    mov rcx, 8192
+    call malloc
+    add rsp, 32
+    pop r8
+    pop rbx
+    pop rdi
+    pop rsi
+    mov [rip + arg_spill_buf], rax
+    mov qword ptr [rip + arg_spill_cap], 1024
+    mov qword ptr [rip + arg_spill_count], 0
+    mov qword ptr [rip + arg_spill_base], 0
+1:
+    mov rcx, [rip + arg_spill_count]
+    mov rdx, [rip + arg_spill_cap]
+    cmp rcx, rdx
+    jb .spill_store_elem
+    shl rdx, 1
+    push rsi
+    push rdi
+    push rbx
+    push r8
+    push rcx
+    push rdx
+    sub rsp, 32
+    mov rcx, [rip + arg_spill_buf]
+    shl rdx, 3
+    call realloc
+    add rsp, 32
+    pop rdx
+    pop rcx
+    pop r8
+    pop rbx
+    pop rdi
+    pop rsi
+    mov [rip + arg_spill_buf], rax
+    mov [rip + arg_spill_cap], rdx
+.spill_store_elem:
+    mov rax, [rip + arg_spill_buf]
+    mov rcx, [rip + arg_spill_count]
+    mov r10, [rbx + r8 * 8]
+    test r10, r10
+    jnz 2f
+    mov r10, [rdi + r8 * 8]
+2:
+    mov [rax + rcx * 8], r10
+    inc rcx
+    mov [rip + arg_spill_count], rcx
+    NEXT
+
+.globl op_load_spill_arg
+.align 64
+op_load_spill_arg:
+    mov r8, [rsi]
+    mov r9, [rsi+8]
+    add rsi, 16
+    mov rax, [rip + arg_spill_buf]
+    test rax, rax
+    jz .spill_load_zero
+    mov rcx, [rip + arg_spill_base]
+    add rcx, r9
+    cmp rcx, [rip + arg_spill_count]
+    jae .spill_load_zero
+    mov r10, [rax + rcx * 8]
+    mov [rdi + r8 * 8], r10
+    mov [rbx + r8 * 8], r10
+    NEXT
+.spill_load_zero:
+    xor r10, r10
+    mov [rdi + r8 * 8], r10
+    mov [rbx + r8 * 8], r10
+    NEXT
+
+.globl op_set_spill_base
+.align 64
+op_set_spill_base:
+    mov r8, [rsi]
+    add rsi, 8
+    mov rax, [rip + arg_spill_count]
+    test r8, r8
+    jz 1f
+    cmp r8, rax
+    ja 1f
+    sub rax, r8
+1:
+    mov [rip + arg_spill_base], rax
+    NEXT
+
+.globl op_clear_spill_args
+.align 64
+op_clear_spill_args:
+    mov qword ptr [rip + arg_spill_count], 0
+    mov qword ptr [rip + arg_spill_base], 0
+    NEXT
+
+.globl op_jmp_rel32
+.align 64
+op_jmp_rel32:
+    movsxd rax, dword ptr [rsi]
+    add rsi, 8
+    add rsi, rax
+    NEXT
+
+.globl op_jmp_far64
+.align 64
+op_jmp_far64:
+    mov r8, [rsi]
+    add rsi, 8
+    cmp r8, 0x10000
+    jae .jmp_far_direct
+    cmp r8, 1024
+    jae .jmp_far_label
+    mov r9, [rbx + r8 * 8]
+    test r9, r9
+    jnz .jmp_far_reg
+    mov r9, [rdi + r8 * 8]
+    test r9, r9
+    jnz .jmp_far_reg
+.jmp_far_label:
+    cmp r8, 524280
+    jae .jmp_far_direct
+    lea rax, [rip + labels_array]
+    mov r9, [rax + r8 * 8]
+    test r9, r9
+    jz .jmp_far_direct
+    mov rsi, r9
+    NEXT
+.jmp_far_reg:
+    mov rsi, r9
+    NEXT
+.jmp_far_direct:
+    mov rsi, r8
+    NEXT
+
+.globl op_call_far64
+.align 64
+op_call_far64:
+    mov r8, [rsi]
+    add rsi, 8
+    lea rax, [rip + call_sp]
+    mov rdx, [rax]
+    cmp rdx, 524280
+    jae .call_stack_overflow
+    lea rcx, [rip + call_stack]
+    mov [rcx + rdx * 8], rsi
+    inc rdx
+    mov [rax], rdx
+    cmp r8, 0x10000
+    jae .call_far_direct
+    cmp r8, 1024
+    jae .call_far_label
+    mov r9, [rbx + r8 * 8]
+    test r9, r9
+    jnz .call_far_reg
+    mov r9, [rdi + r8 * 8]
+    test r9, r9
+    jnz .call_far_reg
+.call_far_label:
+    cmp r8, 524280
+    jae .call_far_direct
+    lea rax, [rip + labels_array]
+    mov r9, [rax + r8 * 8]
+    test r9, r9
+    jz .call_far_direct
+    mov rsi, r9
+    NEXT
+.call_far_reg:
+    mov rsi, r9
+    NEXT
+.call_far_direct:
+    mov rsi, r8
+    NEXT
+
+.globl alloc_next_bytecode_chunk
+alloc_next_bytecode_chunk:
+    push rsi
+    push rdi
+    push rbx
+    push r12
+    push r14
+    push r15
+    sub rsp, 32
+    xor ecx, ecx
+    mov edx, 16777216
+    mov r8d, 0x3000
+    mov r9d, 0x40
+    call VirtualAlloc
+    test rax, rax
+    jnz 1f
+    mov rcx, 16777216
+    call malloc
+1:
+    mov r15, rax
+    lea rax, [rip + op_jmp_far64]
+    mov [r13], rax
+    mov [r13 + 8], r15
+    mov rcx, [rip + bytecode_chunk_count]
+    cmp rcx, 1024
+    jae 2f
+    lea rdx, [rip + bytecode_chunk_table]
+    mov [rdx + rcx * 8], r15
+    inc rcx
+    mov [rip + bytecode_chunk_count], rcx
+2:
+    mov r13, r15
+    lea rdx, [r15 + 16777216 - 65536]
+    mov [rip + bytecode_chunk_limit], rdx
+    add rsp, 32
+    pop r15
+    pop r14
+    pop r12
+    pop rbx
+    pop rdi
+    pop rsi
+    ret
 
 # --- Opcode Handlers ---
 .align 64
@@ -1369,14 +1942,14 @@ op_dict_new:
     push rdi
     push rbx
     sub rsp, 40
-    mov rcx, 144
+    mov rcx, 176
     mov rdx, 1
     call gc_malloc
     add rsp, 40
     pop rbx
     pop rdi
     pop rsi
-    # Zero all 144 bytes
+    # Zero all 176 bytes
     mov qword ptr [rax], 0
     mov qword ptr [rax+8], 0
     mov qword ptr [rax+16], 0
@@ -1395,6 +1968,10 @@ op_dict_new:
     mov qword ptr [rax+120], 0
     mov qword ptr [rax+128], 0
     mov qword ptr [rax+136], 0
+    mov qword ptr [rax+144], 0
+    mov qword ptr [rax+152], 0
+    mov qword ptr [rax+160], 0
+    mov qword ptr [rax+168], 0
     mov [rdi + r12 * 8], rax
     mov [rbx + r12 * 8], rax
 
@@ -1624,6 +2201,31 @@ op_dict_set:
     mov [r10 + 16 + rdx], r11
     mov [r10 + 24 + rdx], rax
 
+    # Phase 2: Hybrid Adaptive Scaling (Robin-Hood Hash Table for > 64 fields)
+    inc qword ptr [r10]
+    cmp qword ptr [r10], 64
+    jbe .no_robin_hood
+    push rsi
+    push rdi
+    push rbx
+    push r10
+    push r11
+    push r14
+    push rax
+    sub rsp, 40
+    mov rcx, r10
+    mov rdx, rax
+    call robin_hood_insert
+    add rsp, 40
+    pop rax
+    pop r14
+    pop r11
+    pop r10
+    pop rbx
+    pop rdi
+    pop rsi
+.no_robin_hood:
+
     # Update call-site inline cache slot
     mov r8, rsi
     shr r8, 3
@@ -1737,11 +2339,51 @@ op_dict_get:
     and eax, 7
     shl rax, 4
     cmp r11, [r10 + 16 + rax]
-    jne .dict_get_loop_start
+    jne .check_robin_hood_get
     mov r13, [r10 + 24 + rax]
     test r13, r13
-    jz .dict_get_loop_start
+    jz .check_robin_hood_get
     mov rax, [r13+8]
+    mov [rdi + r12 * 8], rax
+    mov [rbx + r12 * 8], rax
+
+    # Update call-site inline cache slot
+    mov rax, rsi
+    shr rax, 3
+    and eax, 1023
+    shl rax, 5
+    lea rdx, [rip + ic_table]
+    add rdx, rax
+    mov [rdx], rsi
+    mov [rdx + 8], r10
+    mov [rdx + 16], r11
+    mov [rdx + 24], r13
+    NEXT
+
+.check_robin_hood_get:
+    cmp qword ptr [r10 + 144], 0
+    jz .dict_get_loop_start
+    push rsi
+    push rdi
+    push rbx
+    push r10
+    push r11
+    push r12
+    sub rsp, 48
+    mov rcx, r10
+    mov rdx, r11
+    call robin_hood_lookup
+    add rsp, 48
+    pop r12
+    pop r11
+    pop r10
+    pop rbx
+    pop rdi
+    pop rsi
+    test rax, rax
+    jz .dict_get_not_found
+    mov r13, rax
+    mov rax, [r13 + 8]
     mov [rdi + r12 * 8], rax
     mov [rbx + r12 * 8], rax
 
@@ -11849,12 +12491,25 @@ main:
     mov rbx, rdi
     mov [rip + vm_stack_base], rax
     
-    # Allocate Bytecode Array -------- 32MB for complex programs
-    mov rcx, 33554432
+    # Phase 2: Allocate Bytecode Segment 0 -------- 16MB executable virtual memory chunk
+    xor ecx, ecx
+    mov edx, 16777216           # 16 MB chunk
+    mov r8d, 0x3000             # MEM_COMMIT | MEM_RESERVE
+    mov r9d, 0x40               # PAGE_EXECUTE_READWRITE
+    call VirtualAlloc
+    test rax, rax
+    jnz 1f
+    mov rcx, 16777216
     call malloc
+1:
     mov r12, rax
     mov r13, rax
     mov [rip + vm_bytecode_base], rax
+    lea rcx, [rip + bytecode_chunk_table]
+    mov [rcx], rax
+    mov qword ptr [rip + bytecode_chunk_count], 1
+    lea rdx, [rax + 16777216 - 65536]
+    mov [rip + bytecode_chunk_limit], rdx
     mov dword ptr [rip + sock_nonblocking_mode], 1
 
     # Allocate Fast Bump Arena (512MB)
@@ -12101,6 +12756,13 @@ fgets:
     ret
 
 .read_loop:
+    mov rax, [rip + bytecode_chunk_limit]
+    test rax, rax
+    jz 1f
+    cmp r13, rax
+    jb 1f
+    call alloc_next_bytecode_chunk
+1:
     mov rcx, r14
     lea rdx, [rip + scan_fmt]
     lea r8, [rip + token_buf]
@@ -13713,7 +14375,7 @@ fgets:
     lea rdx, [rip + str_JMP_F_O]
     call strcmp
     cmp eax, 0
-    jne .print_bad_token
+    jne .check_JMP_REL32
     lea rax, [rip + op_jmp_f_o]
     mov [r13], rax
     add r13, 8
@@ -13747,6 +14409,30 @@ fgets:
     cvttsd2si r15, xmm0
     mov [r13], r15
     add r13, 8
+    jmp .read_loop
+
+.check_JMP_REL32:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_JMP_REL32]
+    call strcmp
+    test eax, eax
+    jne .check_JMP_FAR64
+    lea rax, [rip + op_jmp_rel32]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_JMP_FAR64:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_JMP_FAR64]
+    call strcmp
+    test eax, eax
+    jne .print_bad_token
+    lea rax, [rip + op_jmp_far64]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
     jmp .read_loop
 
 .check_STORE_I:
@@ -14927,8 +15613,71 @@ fgets:
     lea rdx, [rip + str_FUSED_FASTCALL_2]
     call strcmp
     test eax, eax
-    jne .check_GET_OP_NOT_FOUND
+    jne .check_GET_OP_PUSH_SPILL_ARG
     lea r15, [rip + op_fused_fastcall_2]
+    jmp .get_op_found
+
+.check_GET_OP_PUSH_SPILL_ARG:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_PUSH_SPILL_ARG]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_LOAD_SPILL_ARG
+    lea r15, [rip + op_push_spill_arg]
+    jmp .get_op_found
+
+.check_GET_OP_LOAD_SPILL_ARG:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_LOAD_SPILL_ARG]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_SET_SPILL_BASE
+    lea r15, [rip + op_load_spill_arg]
+    jmp .get_op_found
+
+.check_GET_OP_SET_SPILL_BASE:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_SET_SPILL_BASE]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_CLEAR_SPILL_ARGS
+    lea r15, [rip + op_set_spill_base]
+    jmp .get_op_found
+
+.check_GET_OP_CLEAR_SPILL_ARGS:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_CLEAR_SPILL_ARGS]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_JMP_REL32
+    lea r15, [rip + op_clear_spill_args]
+    jmp .get_op_found
+
+.check_GET_OP_JMP_REL32:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_JMP_REL32]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_JMP_FAR64
+    lea r15, [rip + op_jmp_rel32]
+    jmp .get_op_found
+
+.check_GET_OP_JMP_FAR64:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_JMP_FAR64]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_CALL_FAR64
+    lea r15, [rip + op_jmp_far64]
+    jmp .get_op_found
+
+.check_GET_OP_CALL_FAR64:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_CALL_FAR64]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_NOT_FOUND
+    lea r15, [rip + op_call_far64]
     jmp .get_op_found
 
 .check_GET_OP_NOT_FOUND:
@@ -15033,8 +15782,31 @@ fgets:
     lea rdx, [rip + str_CHAN_CLOSE]
     call strcmp
     test eax, eax
-    jne .print_bad_token
+    jne .check_CLEAR_SPILL_ARGS
     lea rax, [rip + op_chan_close]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_CLEAR_SPILL_ARGS:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_CLEAR_SPILL_ARGS]
+    call strcmp
+    test eax, eax
+    jne .check_CALL_FAR64
+    lea rax, [rip + op_clear_spill_args]
+    mov [r13], rax
+    add r13, 8
+    jmp .read_loop
+
+.check_CALL_FAR64:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_CALL_FAR64]
+    call strcmp
+    test eax, eax
+    jne .print_bad_token
+    lea rax, [rip + op_call_far64]
     mov [r13], rax
     add r13, 8
     call .read_reg_arg
@@ -15151,7 +15923,7 @@ fgets:
     lea rdx, [rip + str_LOAD_PTR_O]
     call strcmp
     cmp eax, 0
-    jne .print_bad_token
+    jne .check_LOAD_SPILL_ARG
     lea rax, [rip + op_load_ptr_o]
     mov [r13], rax
     add r13, 8
@@ -15187,13 +15959,26 @@ fgets:
     add r13, 8
     jmp .read_loop
 
+.check_LOAD_SPILL_ARG:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_LOAD_SPILL_ARG]
+    call strcmp
+    test eax, eax
+    jne .print_bad_token
+    lea rax, [rip + op_load_spill_arg]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
 
 .check_STORE_PTR_O:
     lea rcx, [rip + token_buf]
     lea rdx, [rip + str_STORE_PTR_O]
     call strcmp
     cmp eax, 0
-    jne .print_bad_token
+    jne .check_SET_SPILL_BASE
     lea rax, [rip + op_store_ptr_o]
     mov [r13], rax
     add r13, 8
@@ -15229,6 +16014,18 @@ fgets:
     add r13, 8
     jmp .read_loop
 
+.check_SET_SPILL_BASE:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_SET_SPILL_BASE]
+    call strcmp
+    test eax, eax
+    jne .print_bad_token
+    lea rax, [rip + op_set_spill_base]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    jmp .read_loop
+
 
 .check_PUSH_PTR:
     lea rcx, [rip + token_buf]
@@ -15262,7 +16059,7 @@ fgets:
     
     call strcmp
     cmp eax, 0
-    jne .check_PANIC
+    jne .check_PUSH_SPILL_ARG
     
     lea rax, [rip + op_pop_ptr]
     mov [r13], rax
@@ -15277,6 +16074,18 @@ fgets:
     cvttsd2si r15, xmm0
     mov [r13], r15
     add r13, 8
+    jmp .read_loop
+
+.check_PUSH_SPILL_ARG:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_PUSH_SPILL_ARG]
+    call strcmp
+    test eax, eax
+    jne .check_PANIC
+    lea rax, [rip + op_push_spill_arg]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
     jmp .read_loop
 
 
