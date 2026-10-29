@@ -1,0 +1,35 @@
+// ============================================================================
+// Nexus Phase 2 Test: Gradual / Optional Static Typing with Type Annotations
+// ============================================================================
+
+fn calculate_norm(matrix: float, alpha: float) -> float {
+    let scale: float = alpha * 2.5;
+    return matrix * scale;
+}
+
+fn add_weighted(a: float, b: float, weight: float) -> float {
+    let sum: float = a + b;
+    return sum * weight;
+}
+
+// 1. Typed local variables
+let x: float = 42.0;
+let msg: string = "Nexus Type System";
+let flag: bool = true;
+
+print(x);
+print(msg);
+print(flag);
+
+// 2. Typed function with return type annotation
+let norm: float = calculate_norm(4.0, 2.0);
+print(norm);
+
+// 3. Typed function with multiple scalar float operations
+let w1: float = add_weighted(10.0, 20.0, 0.5);
+print(w1);
+
+let w2: float = add_weighted(10.0, 20.0, 2.0);
+print(w2);
+
+print("Type annotations test passed.");

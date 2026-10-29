@@ -1,0 +1,67 @@
+// ============================================================================
+// Nexus Phase 2 Test: ADTs (Enums) and Pattern Matching
+// ============================================================================
+
+// 1. Unit Enums
+enum Status {
+    Pending,
+    Active,
+    Done
+}
+
+let s1 = Status.Pending;
+let s2 = Status.Active;
+let s3 = Status.Done;
+
+print(s1 == Status.Pending);
+print(s1 == Status.Active);
+
+match s2 {
+    Status.Pending => print("Status is Pending"),
+    Status.Active => print("Status is Active"),
+    Status.Done => print("Status is Done"),
+    _ => print("Unknown")
+}
+
+// 2. Payload Enums (Algebraic Data Types)
+enum Result {
+    Ok(value),
+    Err(message)
+}
+
+let res1 = Result.Ok("Connection established");
+let res2 = Result.Err("Timeout 5000ms");
+
+match res1 {
+    Result.Ok(val) => print("Success: " + val),
+    Result.Err(err) => print("Failed: " + err),
+    _ => print("Other")
+}
+
+match res2 {
+    Result.Ok(val) => print("Success: " + val),
+    Result.Err(err) => print("Failed: " + err),
+    _ => print("Other")
+}
+
+// 3. Function returning ADT
+fn check_even(n: float) {
+    if n == 4.0 {
+        return Result.Ok("Even number four");
+    }
+    return Result.Err("Not four");
+}
+
+let c1 = check_even(4.0);
+match c1 {
+    Result.Ok(val) => print("Check: " + val),
+    Result.Err(err) => print("Check Error: " + err)
+}
+
+let c2 = check_even(5.0);
+match c2 {
+    Result.Ok(val) => print("Check: " + val),
+    Result.Err(err) => print("Check Error: " + err)
+}
+
+print("ADTs and pattern matching test passed.");

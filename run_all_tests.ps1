@@ -49,7 +49,10 @@ $tests = @(
     "tests/nx/test_stddata.nx",
     "tests/nx/test_stdtorch.nx",
     "tests/nx/test_jit_hot_loop.nx",
-    "tests/nx/test_native_compile.nx"
+    "tests/nx/test_native_compile.nx",
+    "tests/nx/test_type_annotations.nx",
+    "tests/nx/test_adts_and_matching.nx",
+    "tests/nx/test_generational_safety.nx"
 )
 
 $passed = 0
@@ -153,6 +156,20 @@ if ($errCode6 -ne 0 -and $errStr6 -match "error\[E0503\]") {
 } else {
     Write-Host " [FAIL]" -ForegroundColor Red
     Write-Host $errStr6
+    $failed++
+}
+
+# Test E0505: Use-After-Free / Generational Safety Violation
+Write-Host "Running tests/vm/test_uaf.nxasm (expecting error[E0505])..." -NoNewline
+$errOut7 = .\bin\nexus_core.exe tests/vm/test_uaf.nxasm 2>&1
+$errCode7 = $LASTEXITCODE
+$errStr7 = $errOut7 -join "`n"
+if ($errCode7 -ne 0 -and $errStr7 -match "error\[E0505\]") {
+    Write-Host " [PASS]" -ForegroundColor Green
+    $passed++
+} else {
+    Write-Host " [FAIL]" -ForegroundColor Red
+    Write-Host $errStr7
     $failed++
 }
 

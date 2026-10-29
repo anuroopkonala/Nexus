@@ -59,6 +59,14 @@ arena_bump: .quad 0
 arena_limit: .quad 0
 gc_alloc_counter: .quad 0
 arena_live_count: .quad 0
+region_arena_base: .quad 0
+region_arena_bump: .quad 0
+region_arena_limit: .quad 0
+region_scope_depth: .quad 0
+global_generation: .quad 1
+region_scope_stack: .skip 2048
+str_uaf_err:
+    .asciz "\n\033[1;31merror[E0505]\033[0m: \033[1mruntime exception: use-after-free detected (generational reference expired or scope reclaimed)\033[0m\n  \033[1;34m-->\033[0m \033[1;37m%s\033[0m\n   \033[1;34m|\033[0m\n   \033[1;34m=\033[0m \033[1mnote\033[0m: accessed an object after its enclosing scope or generational lifetime ended\n   \033[1;34m=\033[0m \033[1mhelp\033[0m: ensure object references do not outlive their owning scope or arena\n\n"
 last_optimized_dynamic_buf: .quad 0
 active_dynamic_buf: .quad 0
 active_dynamic_end: .quad 0
@@ -74,6 +82,10 @@ time_msg: .asciz "[Nexus Baremetal] VM execution complete.\n"
 debug_fmt: .asciz "[Nexus Baremetal] Register output: %f\n"
 char_fmt: .asciz "%c"
 str_fmt: .asciz "%s\n"
+str_enum_unit_fmt: .asciz "<Enum tag=%lld>\n"
+str_enum_payload_fmt: .asciz "<Enum tag=%lld, val="
+str_enum_str_val_fmt: .asciz "\"%s\">\n"
+str_enum_float_val_fmt: .asciz "%g>\n"
 str_fmt2: .asciz "strcmp(%p, %p) stack=%p\n"
 str_fmt3: .asciz "Values: [%p] vs [%p]\n"
 bad_token_fmt: .asciz "BAD_TOKEN: %s\n"
@@ -268,6 +280,13 @@ str_LOAD: .asciz "LOAD"
 str_ADD: .asciz "ADD"
 str_PRINT: .asciz "PRINT"
 str_HALT: .asciz "HALT"
+str_ENUM_TAG: .asciz "ENUM_TAG"
+str_ENUM_GET_TAG: .asciz "ENUM_GET_TAG"
+str_ENUM_GET_FIELD: .asciz "ENUM_GET_FIELD"
+str_REGION_ENTER: .asciz "REGION_ENTER"
+str_REGION_LEAVE: .asciz "REGION_LEAVE"
+str_GEN_CHECK: .asciz "GEN_CHECK"
+str_REGION_ALLOC: .asciz "REGION_ALLOC"
 str_LT: .asciz "LT"
 str_LABEL: .asciz "LABEL"
 str_JMP: .asciz "JMP"
@@ -534,6 +553,9 @@ op_print:
     mov r10, 0x44494354          # "DICT"
     cmp [rax - 32], r10
     je .print_top_dict
+
+    cmp qword ptr [rax - 32], 0xAA01
+    je .print_top_enum
 
 .print_top_string:
     lea rcx, [rip + str_fmt]
@@ -807,6 +829,47 @@ op_print:
     movaps xmm1, xmm0
     movq rdx, xmm0
     call printf
+    jmp .print_done
+
+.print_top_enum:
+    push r12
+    push r13
+    sub rsp, 32
+    mov r12, rax
+    cmp qword ptr [r12 + 16], 0
+    jle .pte_unit
+    lea rcx, [rip + str_enum_payload_fmt]
+    mov rdx, [r12]
+    call printf
+    mov rax, [r12 + 24]
+    mov r10, 0x7FF0000000000000
+    test rax, r10
+    jnz .pte_payload_float
+    cmp rax, 0x10000
+    jb .pte_payload_float
+    mov r10, 0x00007FFFFFFFFFFF
+    cmp rax, r10
+    ja .pte_payload_float
+    lea rcx, [rip + str_enum_str_val_fmt]
+    mov rdx, rax
+    call printf
+    jmp .pte_done
+.pte_payload_float:
+    movq xmm0, rax
+    lea rcx, [rip + str_enum_float_val_fmt]
+    movaps xmm1, xmm0
+    movq rdx, xmm0
+    call printf
+    jmp .pte_done
+.pte_unit:
+    lea rcx, [rip + str_enum_unit_fmt]
+    mov rdx, [r12]
+    call printf
+.pte_done:
+    add rsp, 32
+    pop r13
+    pop r12
+    jmp .print_done
 
 .print_done:
     add rsp, 40
@@ -1056,6 +1119,55 @@ op_eq:
     mov r10, 0x00007FFFFFFFFFFF
     cmp rdx, r10
     ja .eq_float
+    cmp rax, rdx
+    je .eq_match
+
+    # Check if both are GC objects in arena:
+    mov r10, [rip + arena_base]
+    cmp rax, r10
+    jb .eq_do_strcmp
+    cmp rax, [rip + arena_limit]
+    jae .eq_do_strcmp
+    cmp rdx, r10
+    jb .eq_do_strcmp
+    cmp rdx, [rip + arena_limit]
+    jae .eq_do_strcmp
+
+    # Both within arena! Check if either is enum (0xAA01):
+    cmp qword ptr [rax - 32], 0xAA01
+    jne .eq_do_strcmp
+    cmp qword ptr [rdx - 32], 0xAA01
+    jne .eq_mismatch
+
+    # Both are enums! Compare tag:
+    mov r10, [rax]
+    cmp r10, [rdx]
+    jne .eq_mismatch
+    # Tag matches! Check field_count:
+    mov r11, [rax + 16]
+    cmp r11, [rdx + 16]
+    jne .eq_mismatch
+    test r11, r11
+    jz .eq_match
+    # Compare payloads:
+    mov r10, [rax + 24]
+    cmp r10, [rdx + 24]
+    je .eq_match
+    jmp .eq_mismatch
+
+.eq_match:
+    mov eax, 1
+    cvtsi2sd xmm0, eax
+    movsd [rdi + rcx * 8], xmm0
+    NEXT
+
+.eq_mismatch:
+    xor eax, eax
+    cvtsi2sd xmm0, eax
+    movsd [rdi + rcx * 8], xmm0
+    NEXT
+
+.eq_do_strcmp:
     push rsi
     push rdi
     push rbx
@@ -10125,6 +10237,167 @@ op_pop_ptr:
 op_halt:
     jmp vm_exit
 
+op_enum_tag:
+    mov r12, [rsi]
+    mov r8,  [rsi+8]
+    mov r9,  [rsi+16]
+    add rsi, 24
+    mov r10, [rdi + r9 * 8]
+    push rsi
+    push rdi
+    push rbx
+    push r8
+    push r10
+    sub rsp, 40
+    mov rcx, 32
+    mov rdx, 0xAA01
+    call gc_malloc
+    add rsp, 40
+    pop r10
+    pop r8
+    pop rbx
+    pop rdi
+    pop rsi
+    mov [rax], r8
+    mov qword ptr [rax + 8], 0xAA01
+    mov qword ptr [rax + 16], 1
+    mov [rax + 24], r10
+    mov [rdi + r12 * 8], rax
+    mov [rbx + r12 * 8], rax
+    NEXT
+
+op_enum_get_tag:
+    mov r12, [rsi]
+    mov r8,  [rsi+8]
+    add rsi, 16
+    mov rax, [rdi + r8 * 8]
+    test rax, rax
+    jz .egt_zero
+    mov r9, [rax]
+    cvtsi2sd xmm0, r9
+    movsd [rdi + r12 * 8], xmm0
+    movq rax, xmm0
+    mov [rbx + r12 * 8], rax
+    NEXT
+.egt_zero:
+    xorpd xmm0, xmm0
+    movsd [rdi + r12 * 8], xmm0
+    mov qword ptr [rbx + r12 * 8], 0
+    NEXT
+
+op_enum_get_field:
+    mov r12, [rsi]
+    mov r8,  [rsi+8]
+    mov r9,  [rsi+16]
+    add rsi, 24
+    mov rax, [rdi + r8 * 8]
+    test rax, rax
+    jz .egf_zero
+    lea r10, [rax + 24]
+    mov r11, [r10 + r9 * 8]
+    mov [rdi + r12 * 8], r11
+    mov [rbx + r12 * 8], r11
+    NEXT
+.egf_zero:
+    mov qword ptr [rdi + r12 * 8], 0
+    mov qword ptr [rbx + r12 * 8], 0
+    NEXT
+
+op_region_enter:
+    mov rax, [rip + region_scope_depth]
+    cmp rax, 250
+    jae .re_skip
+    lea r10, [rip + region_scope_stack]
+    mov r11, [rip + region_arena_bump]
+    mov [r10 + rax * 8], r11
+    inc qword ptr [rip + region_scope_depth]
+.re_skip:
+    NEXT
+
+op_region_leave:
+    mov rax, [rip + region_scope_depth]
+    test rax, rax
+    jz .rl_skip
+    dec rax
+    mov [rip + region_scope_depth], rax
+    lea r10, [rip + region_scope_stack]
+    mov r11, [r10 + rax * 8]
+    mov [rip + region_arena_bump], r11
+    inc qword ptr [rip + global_generation]
+.rl_skip:
+    NEXT
+
+op_gen_check:
+    mov r8, [rsi]
+    mov r9, [rsi+8]
+    add rsi, 16
+    mov rax, [rdi + r8 * 8]
+    test rax, rax
+    jz .gc_ok
+    mov r10, [rip + region_arena_base]
+    cmp rax, r10
+    jb .gc_ok
+    cmp rax, [rip + region_arena_limit]
+    jae .gc_ok
+    cmp rax, [rip + region_arena_bump]
+    jb .gc_ok
+    call report_runtime_use_after_free
+    mov ecx, 1
+    call exit
+.gc_ok:
+    NEXT
+
+op_region_alloc:
+    mov r12, [rsi]
+    mov r8,  [rsi+8]
+    add rsi, 16
+    movsd xmm0, [rdi + r8 * 8]
+    cvttsd2si rcx, xmm0
+    test rcx, rcx
+    jg 1f
+    mov rcx, 16
+1:
+    lea rcx, [rcx + 15]
+    and rcx, -16
+    mov rax, [rip + region_arena_bump]
+    lea r10, [rax + rcx]
+    cmp r10, [rip + region_arena_limit]
+    ja .ra_oom
+    mov [rip + region_arena_bump], r10
+    mov [rdi + r12 * 8], rax
+    mov [rbx + r12 * 8], rax
+    NEXT
+.ra_oom:
+    push rsi
+    push rdi
+    push rbx
+    sub rsp, 40
+    call malloc
+    add rsp, 40
+    pop rbx
+    pop rdi
+    pop rsi
+    mov [rdi + r12 * 8], rax
+    mov [rbx + r12 * 8], rax
+    NEXT
+
+.globl report_runtime_use_after_free
+report_runtime_use_after_free:
+    sub rsp, 40
+    mov rcx, [rip + cli_source_file]
+    test rcx, rcx
+    jnz 1f
+    lea rcx, [rip + str_default_src]
+1:
+    mov rdx, rcx
+    lea rcx, [rip + str_uaf_err]
+    call printf
+    mov rcx, 0
+    call fflush
+    add rsp, 40
+    ret
+    jmp vm_exit
+
 op_ret_dynamic:
     lea r8, [rip + call_sp]
     mov r9, [r8]
@@ -10408,6 +10681,16 @@ main:
     mov [rip + arena_bump], rax
     add rax, 536870912
     mov [rip + arena_limit], rax
+
+    # Allocate Scoped Region Bump Arena (64MB)
+    mov rcx, 67108864
+    call malloc
+    mov [rip + region_arena_base], rax
+    mov [rip + region_arena_bump], rax
+    add rax, 67108864
+    mov [rip + region_arena_limit], rax
+    mov qword ptr [rip + region_scope_depth], 0
+    mov qword ptr [rip + global_generation], 1
 
     # Allocate Call Stack (r15)
     mov rcx, 65536
@@ -10807,6 +11090,109 @@ fgets:
     lea rax, [rip + op_halt]
     mov [r13], rax
     add r13, 8
+    jmp .read_loop
+
+.read_reg_arg:
+    sub rsp, 40
+    mov rcx, r14
+    lea rdx, [rip + scan_fmt]
+    lea r8, [rip + reg_buf]
+    call fscanf
+    lea rcx, [rip + reg_buf]
+    call atoi
+    movsxd rax, eax
+    mov [r13], rax
+    add r13, 8
+    add rsp, 40
+    ret
+
+.check_REGION_ENTER:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_REGION_ENTER]
+    call strcmp
+    test eax, eax
+    jne .check_REGION_LEAVE
+    lea rax, [rip + op_region_enter]
+    mov [r13], rax
+    add r13, 8
+    jmp .read_loop
+
+.check_REGION_LEAVE:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_REGION_LEAVE]
+    call strcmp
+    test eax, eax
+    jne .check_REGION_ALLOC
+    lea rax, [rip + op_region_leave]
+    mov [r13], rax
+    add r13, 8
+    jmp .read_loop
+
+.check_REGION_ALLOC:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_REGION_ALLOC]
+    call strcmp
+    test eax, eax
+    jne .check_GEN_CHECK
+    lea rax, [rip + op_region_alloc]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_GEN_CHECK:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_GEN_CHECK]
+    call strcmp
+    test eax, eax
+    jne .check_ENUM_TAG
+    lea rax, [rip + op_gen_check]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_ENUM_TAG:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_ENUM_TAG]
+    call strcmp
+    test eax, eax
+    jne .check_ENUM_GET_TAG
+    lea rax, [rip + op_enum_tag]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_ENUM_GET_TAG:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_ENUM_GET_TAG]
+    call strcmp
+    test eax, eax
+    jne .check_ENUM_GET_FIELD
+    lea rax, [rip + op_enum_get_tag]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_ENUM_GET_FIELD:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_ENUM_GET_FIELD]
+    call strcmp
+    test eax, eax
+    jne .print_bad_token
+    lea rax, [rip + op_enum_get_field]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    call .read_reg_arg
     jmp .read_loop
 
 .check_LT:
@@ -11898,7 +12284,7 @@ fgets:
     lea rdx, [rip + str_EXEC_DYNAMIC]
     call strcmp
     cmp eax, 0
-    jne .print_bad_token
+    jne .check_ENUM_TAG
     lea rax, [rip + op_exec_dynamic]
     mov [r13], rax
     add r13, 8
@@ -12034,7 +12420,7 @@ fgets:
     lea rdx, [rip + str_GET_OP]
     call strcmp
     cmp eax, 0
-    jne .print_bad_token
+    jne .check_GEN_CHECK
     
     mov rcx, r14
     lea rdx, [rip + scan_fmt]
@@ -12923,8 +13309,71 @@ fgets:
     lea rdx, [rip + str_HALT]
     call strcmp
     test eax, eax
-    jne .check_GET_OP_NOT_FOUND
+    jne .check_GET_OP_ENUM_TAG
     lea r15, [rip + op_halt]
+    jmp .get_op_found
+
+.check_GET_OP_ENUM_TAG:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_ENUM_TAG]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_ENUM_GET_TAG
+    lea r15, [rip + op_enum_tag]
+    jmp .get_op_found
+
+.check_GET_OP_ENUM_GET_TAG:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_ENUM_GET_TAG]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_ENUM_GET_FIELD
+    lea r15, [rip + op_enum_get_tag]
+    jmp .get_op_found
+
+.check_GET_OP_ENUM_GET_FIELD:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_ENUM_GET_FIELD]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_REGION_ENTER
+    lea r15, [rip + op_enum_get_field]
+    jmp .get_op_found
+
+.check_GET_OP_REGION_ENTER:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_REGION_ENTER]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_REGION_LEAVE
+    lea r15, [rip + op_region_enter]
+    jmp .get_op_found
+
+.check_GET_OP_REGION_LEAVE:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_REGION_LEAVE]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_GEN_CHECK
+    lea r15, [rip + op_region_leave]
+    jmp .get_op_found
+
+.check_GET_OP_GEN_CHECK:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_GEN_CHECK]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_REGION_ALLOC
+    lea r15, [rip + op_gen_check]
+    jmp .get_op_found
+
+.check_GET_OP_REGION_ALLOC:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_REGION_ALLOC]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_NOT_FOUND
+    lea r15, [rip + op_region_alloc]
     jmp .get_op_found
 
 .check_GET_OP_NOT_FOUND:
@@ -12976,7 +13425,7 @@ fgets:
     lea rdx, [rip + str_RET]
     call strcmp
     cmp eax, 0
-    jne .print_bad_token
+    jne .check_REGION_ENTER
     
     lea rax, [rip + op_ret]
     mov [r13], rax
