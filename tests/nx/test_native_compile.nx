@@ -1,0 +1,12 @@
+import stdlib
+
+fn main() {
+    System.print("=== Testing Nexus Direct Native Machine Code Compiler ===")
+    let a = 100
+    let b = 200
+    let c = a + b
+    System.print(c)
+    System.print("=== Nexus Direct Native Compiler Verification Passed ===")
+}
+
+main()

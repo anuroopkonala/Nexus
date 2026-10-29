@@ -47,7 +47,9 @@ $tests = @(
     "tests/nx/test_limits_gpu.nx",
     "tests/nx/test_stdtensor.nx",
     "tests/nx/test_stddata.nx",
-    "tests/nx/test_stdtorch.nx"
+    "tests/nx/test_stdtorch.nx",
+    "tests/nx/test_jit_hot_loop.nx",
+    "tests/nx/test_native_compile.nx"
 )
 
 $passed = 0

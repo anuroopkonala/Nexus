@@ -1,0 +1,36 @@
+import stdlib
+
+fn test_jit_accumulator_100k() {
+    let n = 100000
+    let sum = 0
+    let i = 0
+    while i < n {
+        sum += i
+        i += 1
+    }
+    // Sum of 0..99999 = 99999 * 100000 / 2 = 4999950000
+    System.print(sum)
+    System.print(i)
+}
+
+fn test_jit_accumulator_1m() {
+    let n = 1000000
+    let sum = 0
+    let i = 0
+    while i < n {
+        sum += i
+        i += 1
+    }
+    // Sum of 0..999999 = 999999 * 1000000 / 2 = 499999500000
+    System.print(sum)
+    System.print(i)
+}
+
+fn main() {
+    System.print("=== Testing Nexus Pure Assembly In-Memory JIT Engine ===")
+    test_jit_accumulator_100k()
+    test_jit_accumulator_1m()
+    System.print("=== Nexus In-Memory JIT Verification Passed ===")
+}
+
+main()

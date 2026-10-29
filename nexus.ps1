@@ -164,6 +164,41 @@ elseif ($Action -eq "aot") {
 
     Write-Host "AOT Compilation Successful: $outTarget" -ForegroundColor Green
 }
+elseif ($Action -eq "native") {
+    if (-not $File) {
+        Write-Host "Error: No source file specified for Native compilation." -ForegroundColor Red
+        Write-Host "Usage: .\nexus.ps1 native <file.nx> [out.exe]"
+        exit 1
+    }
+    if (-not (Test-Path $File)) {
+        Write-Host "Error: Source file '$File' not found." -ForegroundColor Red
+        exit 1
+    }
+    $outTarget = $OutputFile
+    if (-not $outTarget) {
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($File)
+        $outTarget = "$baseName.exe"
+    }
+
+    Write-Host "Compiling $File directly to Native Machine Code ($outTarget)..." -ForegroundColor Cyan
+
+    if (-not (Test-Path "bin/nexus_native_compiler.exe")) {
+        gcc -O2 -o bin/nexus_native_compiler.exe src/aot/nexus_native_emitter.s
+    }
+
+    $tempId = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+    $tempS = "$env:TEMP\nexus_native_$tempId.s"
+    & .\bin\nexus_native_compiler.exe $File $tempS
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Native compilation failed!" -ForegroundColor Red
+        exit 1
+    }
+
+    gcc -O2 -o $outTarget $tempS
+    Remove-Item -Force -ErrorAction SilentlyContinue $tempS
+
+    Write-Host "Native Compilation Successful: $outTarget (Zero VM, Direct Machine Code)" -ForegroundColor Green
+}
 else {
     Write-Host "Nexus Baremetal Developer CLI Toolkit" -ForegroundColor Cyan
     Write-Host "Usage:"
@@ -171,5 +206,6 @@ else {
     Write-Host "  .\nexus.ps1 run <file.nx>         - Executes a .nx or .nxasm program"
     Write-Host "  .\nexus.ps1 test                  - Runs full regression test suite"
     Write-Host "  .\nexus.ps1 bench                 - Runs continuous performance benchmark suite"
-    Write-Host "  .\nexus.ps1 aot <file.nx> [out]   - Ahead-Of-Time standalone zero-dependency .exe compiler"
+    Write-Host "  .\nexus.ps1 aot <file.nx> [out]   - Ahead-Of-Time standalone VM launcher .exe compiler"
+    Write-Host "  .\nexus.ps1 native <file.nx> [out]- Direct Native Machine Code Compiler (Zero VM)"
 }

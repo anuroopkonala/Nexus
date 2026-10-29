@@ -2356,6 +2356,45 @@ op_jmp_o:
     NEXT
 
 .normal_jmp_o:
+    push rcx
+    push rdx
+    push r8
+    push r9
+    push r10
+    push r11
+    sub rsp, 48
+
+    lea rcx, [r9 + r8]
+    mov rdx, rsi
+    mov r8, rdi
+    mov r9, rbx
+    lea rax, [rsp + 40]
+    mov [rsp + 40], rsi
+    mov [rsp + 32], rax
+    call nexus_jit_eval_loop
+
+    test eax, eax
+    jz .jit_eval_miss
+
+    mov rsi, [rsp + 40]
+    add rsp, 48
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+    NEXT
+
+.jit_eval_miss:
+    add rsp, 48
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+
     lea rsi, [r9 + r8]
     NEXT
 
@@ -10346,6 +10385,7 @@ main:
 
     lea rcx, [rip + perf_freq]
     call QueryPerformanceFrequency
+    call nexus_jit_init
 
     # Allocate VM Registers Array (rdi/rbx) -------- 8192 regs * 8 bytes (zeroed)
     mov rcx, 8192
@@ -13304,3 +13344,5 @@ vm_exit:
     ret
 
 .include "src/vm/nexus_diag.s"
+
+.include "src/vm/nexus_jit.s"
