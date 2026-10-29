@@ -1,0 +1,102 @@
+import stdlib
+
+System.print_str("--- Phase 3: M:N Green Threads / Fibers ---")
+
+// 1. Single Fiber Spawn and Await
+fn worker1() -> float {
+    return 42.0
+}
+
+let f1 = Fiber.spawn(worker1)
+if f1 >= 0.0 {
+    System.print_str("PASS: Fiber.spawn single task")
+} else {
+    System.print_str("FAIL: Fiber.spawn single task")
+}
+
+let res1 = Fiber.await(f1)
+if res1 == 42.0 {
+    System.print_str("PASS: Fiber.await single task returned 42.0")
+} else {
+    System.print_str("FAIL: Fiber.await single task")
+}
+
+// 2. Cooperative Multitasking with Fiber.yield()
+fn cooperative_worker() -> float {
+    let mut sum = 0.0
+    sum = sum + 10.0
+    Fiber.yield()
+    sum = sum + 20.0
+    Fiber.yield()
+    sum = sum + 30.0
+    return sum
+}
+
+let f2 = Fiber.spawn(cooperative_worker)
+let res2 = Fiber.await(f2)
+if res2 == 60.0 {
+    System.print_str("PASS: Fiber.yield cooperative execution reached 60.0")
+} else {
+    System.print_str("FAIL: Fiber.yield cooperative execution")
+}
+
+// 3. Multiple Concurrent Fibers
+fn task_a() -> float {
+    Fiber.yield()
+    return 100.0
+}
+
+fn task_b() -> float {
+    Fiber.yield()
+    return 200.0
+}
+
+let fa = Fiber.spawn(task_a)
+let fb = Fiber.spawn(task_b)
+
+let ra = Fiber.await(fa)
+let rb = Fiber.await(fb)
+
+if ra == 100.0 and rb == 200.0 {
+    System.print_str("PASS: Multiple concurrent fibers awaited")
+} else {
+    System.print_str("FAIL: Multiple concurrent fibers")
+}
+
+// 4. Fiber with Lock-Free Channels (Actor Pattern)
+let ch = Channel.new(8)
+
+fn producer_fiber() -> float {
+    Channel.send(ch, 999.0)
+    Fiber.yield()
+    Channel.send(ch, 888.0)
+    return 1.0
+}
+
+let pf = Fiber.spawn(producer_fiber)
+Fiber.await(pf)
+
+let msg1 = Channel.recv(ch)
+let msg2 = Channel.recv(ch)
+if msg1 == 999.0 and msg2 == 888.0 {
+    System.print_str("PASS: Fiber Actor channel message passing")
+} else {
+    System.print_str("FAIL: Fiber Actor channel message passing")
+}
+Channel.close(ch)
+
+// 5. Global Fiber Built-in Functions
+fn simple_task() -> float {
+    yield()
+    return 777.0
+}
+
+let g_fid = spawn(simple_task)
+let g_res = await(g_fid)
+if g_res == 777.0 {
+    System.print_str("PASS: Global fiber functions API")
+} else {
+    System.print_str("FAIL: Global fiber functions API")
+}
+
+System.print_str("--- Fibers Test Suite Complete ---")

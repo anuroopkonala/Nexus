@@ -1,0 +1,79 @@
+import stdlib
+
+System.print_str("--- Phase 3: High-Performance Async Event Loop (Windows IOCP) ---")
+
+// 1. Initialize Windows I/O Completion Port
+let iocp = AsyncNet.iocp_init()
+if iocp != 0.0 {
+    System.print_str("PASS: AsyncNet.iocp_init created completion port")
+} else {
+    System.print_str("FAIL: AsyncNet.iocp_init")
+}
+
+// 2. Start Async Non-blocking TCP Listener
+let port = 19892.0
+let srv = AsyncNet.listen(port)
+if srv >= 0.0 {
+    System.print_str("PASS: AsyncNet.listen non-blocking socket bound")
+} else {
+    System.print_str("FAIL: AsyncNet.listen")
+}
+
+// 3. Connect TCP Client
+let cli = Net.tcp_connect("127.0.0.1", port)
+if cli >= 0.0 {
+    System.print_str("PASS: Net.tcp_connect client connected")
+} else {
+    System.print_str("FAIL: Net.tcp_connect")
+}
+
+// 4. Async Accept Non-blocking Connection
+let peer = AsyncNet.accept(srv)
+if peer >= 0.0 {
+    System.print_str("PASS: AsyncNet.accept non-blocking peer accepted")
+} else {
+    System.print_str("FAIL: AsyncNet.accept")
+}
+
+// 5. Async Send via IOCP
+let test_payload = "IOCP_NONBLOCKING_EVENT_OK"
+let bytes_sent = AsyncNet.send(cli, test_payload)
+if bytes_sent > 0.0 {
+    System.print_str("PASS: AsyncNet.send transmitted message")
+} else {
+    System.print_str("FAIL: AsyncNet.send")
+}
+
+// 6. Poll IOCP Queue for completion event
+let event_status = AsyncNet.poll(200.0)
+if event_status > 0.0 {
+    System.print_str("PASS: AsyncNet.poll captured completion status")
+} else {
+    System.print_str("FAIL: AsyncNet.poll")
+}
+
+// 7. Async Non-blocking Recv
+let received_data = AsyncNet.recv(peer, 1024.0)
+if received_data == test_payload {
+    System.print_str("PASS: AsyncNet.recv verified message payload integrity")
+} else {
+    System.print_str("FAIL: AsyncNet.recv payload mismatch")
+}
+
+// 8. Global built-in functions API
+let global_sent = async_tcp_send(peer, "BUILTIN_ASYNC_OK")
+if global_sent > 0.0 {
+    System.print_str("PASS: Global async_tcp_send")
+}
+let global_recv = async_tcp_recv(cli, 1024.0)
+if global_recv == "BUILTIN_ASYNC_OK" {
+    System.print_str("PASS: Global async_tcp_recv")
+}
+
+// Clean up sockets
+cli.close()
+peer.close()
+srv.close()
+System.print_str("PASS: Async socket cleanup")
+
+System.print_str("--- Async IOCP Event Loop Complete ---")

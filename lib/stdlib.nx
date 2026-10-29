@@ -433,3 +433,70 @@ class GPU {
         return gpu_dispatch(30.0, [])
     }
 }
+
+// ============================================================================
+// Concurrency, Channels & Async I/O (Phase 3)
+// ============================================================================
+
+class Fiber {
+    fn spawn(f) {
+        return spawn(f)
+    }
+
+    fn yield() {
+        return yield()
+    }
+
+    fn await(fid) {
+        return await(fid)
+    }
+}
+
+class Channel {
+    fn new(cap) {
+        return chan(cap)
+    }
+
+    fn send(ch, val) {
+        return chan_send(ch, val)
+    }
+
+    fn recv(ch) {
+        return chan_recv(ch)
+    }
+
+    fn len(ch) {
+        return chan_len(ch)
+    }
+
+    fn close(ch) {
+        return chan_close(ch)
+    }
+}
+
+class AsyncNet {
+    fn iocp_init() {
+        return iocp_init()
+    }
+
+    fn listen(port) {
+        return async_tcp_listen(port)
+    }
+
+    fn accept(sock) {
+        return async_tcp_accept(sock)
+    }
+
+    fn send(sock, data) {
+        return async_tcp_send(sock, data)
+    }
+
+    fn recv(sock, max_len) {
+        return async_tcp_recv(sock, max_len)
+    }
+
+    fn poll(timeout_ms) {
+        return async_poll(timeout_ms)
+    }
+}
+

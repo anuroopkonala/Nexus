@@ -52,7 +52,10 @@ $tests = @(
     "tests/nx/test_native_compile.nx",
     "tests/nx/test_type_annotations.nx",
     "tests/nx/test_adts_and_matching.nx",
-    "tests/nx/test_generational_safety.nx"
+    "tests/nx/test_generational_safety.nx",
+    "tests/nx/test_fibers.nx",
+    "tests/nx/test_lockfree_channels.nx",
+    "tests/nx/test_async_iocp.nx"
 )
 
 $passed = 0

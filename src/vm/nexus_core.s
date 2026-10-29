@@ -287,6 +287,20 @@ str_REGION_ENTER: .asciz "REGION_ENTER"
 str_REGION_LEAVE: .asciz "REGION_LEAVE"
 str_GEN_CHECK: .asciz "GEN_CHECK"
 str_REGION_ALLOC: .asciz "REGION_ALLOC"
+str_FIBER_SPAWN: .asciz "FIBER_SPAWN"
+str_FIBER_YIELD: .asciz "FIBER_YIELD"
+str_FIBER_AWAIT: .asciz "FIBER_AWAIT"
+str_IOCP_INIT: .asciz "IOCP_INIT"
+str_IOCP_POLL: .asciz "IOCP_POLL"
+str_ASYNC_LISTEN: .asciz "ASYNC_LISTEN"
+str_ASYNC_ACCEPT: .asciz "ASYNC_ACCEPT"
+str_ASYNC_RECV: .asciz "ASYNC_RECV"
+str_ASYNC_SEND: .asciz "ASYNC_SEND"
+str_CHAN_NEW: .asciz "CHAN_NEW"
+str_CHAN_SEND: .asciz "CHAN_SEND"
+str_CHAN_RECV: .asciz "CHAN_RECV"
+str_CHAN_LEN: .asciz "CHAN_LEN"
+str_CHAN_CLOSE: .asciz "CHAN_CLOSE"
 str_LT: .asciz "LT"
 str_LABEL: .asciz "LABEL"
 str_JMP: .asciz "JMP"
@@ -366,6 +380,25 @@ gc_threshold: .space 8
 
 argc_store: .space 8
 argv_store: .space 8
+
+.align 16
+vm_bytecode_base: .space 8
+fiber_count: .space 8
+current_fiber_id: .space 8
+scheduler_initialized: .space 8
+ready_head: .space 8
+ready_tail: .space 8
+ready_count: .space 8
+main_fcb: .space 128
+fiber_table: .space 65536
+fiber_ready_queue: .space 65536
+
+.align 8
+iocp_global_handle: .space 8
+iocp_bytes_transferred: .space 8
+iocp_completion_key: .space 8
+iocp_overlapped: .space 8
+sock_nonblocking_mode: .space 8
 
 try_stack_rsi: .space 8192
 try_stack_call_sp: .space 8192
@@ -4475,6 +4508,9 @@ op_gte:
     NEXT
 
 op_ret:
+    mov r8, [rip + current_fiber_id]
+    test r8, r8
+    jnz .fiber_op_ret
     lea r8, [rip + call_sp]
     mov r9, [r8]         # r9 = call_sp
     test r9, r9
@@ -4483,6 +4519,19 @@ op_ret:
     mov [r8], r9
     lea r10, [rip + call_stack]
     mov rsi, [r10 + r9 * 8]
+    NEXT
+.fiber_op_ret:
+    lea rax, [rip + fiber_table]
+    mov rcx, [rax + r8 * 8]
+    mov r10, [rcx + 96]
+    lea r8, [rip + call_sp]
+    mov r9, [r8]
+    cmp r9, r10
+    jle .fiber_terminate
+    dec r9
+    mov [r8], r9
+    lea r11, [rip + call_stack]
+    mov rsi, [r11 + r9 * 8]
     NEXT
 .ret_underflow:
     jmp vm_exit
@@ -10398,7 +10447,834 @@ report_runtime_use_after_free:
     ret
     jmp vm_exit
 
+# ============================================================================
+# PHASE 3: CONCURRENCY, ASYNCHRONOUS I/O & ACTOR NETWORKING
+# ============================================================================
+
+ensure_scheduler_init:
+    cmp qword ptr [rip + scheduler_initialized], 1
+    je .esi_done
+    mov qword ptr [rip + scheduler_initialized], 1
+    
+    lea rax, [rip + main_fcb]
+    mov qword ptr [rax + 0], 0       # fid = 0
+    mov qword ptr [rax + 8], 1       # state = 1 (RUNNING)
+    mov qword ptr [rax + 96], 0      # call_sp_base = 0
+    mov qword ptr [rax + 104], 0     # return_val = 0
+    mov qword ptr [rax + 112], -1    # waiter_fid = -1
+    mov qword ptr [rax + 120], 0     # saved call_sp
+    
+    lea rdx, [rip + fiber_table]
+    mov [rdx], rax                   # fiber_table[0] = &main_fcb
+    mov qword ptr [rip + current_fiber_id], 0
+    mov qword ptr [rip + fiber_count], 1
+    mov qword ptr [rip + ready_head], 0
+    mov qword ptr [rip + ready_tail], 0
+    mov qword ptr [rip + ready_count], 0
+.esi_done:
+    ret
+
+# fiber_switch_context(from_fcb: rcx, to_fcb: rdx)
+fiber_switch_context:
+    # Save current CPU non-volatile registers to from_fcb
+    mov [rcx + 16], rsp
+    mov [rcx + 24], rbp
+    mov [rcx + 32], rbx
+    mov [rcx + 40], r12
+    mov [rcx + 48], r13
+    mov [rcx + 56], r14
+    mov [rcx + 64], r15
+    mov [rcx + 72], rsi
+    mov [rcx + 80], rdi
+    
+    # Save VM call stack depth
+    mov rax, [rip + call_sp]
+    mov [rcx + 120], rax
+    
+    # Restore CPU non-volatile registers from to_fcb
+    mov rsp, [rdx + 16]
+    mov rbp, [rdx + 24]
+    mov rbx, [rdx + 32]
+    mov r12, [rdx + 40]
+    mov r13, [rdx + 48]
+    mov r14, [rdx + 56]
+    mov r15, [rdx + 64]
+    mov rsi, [rdx + 72]
+    mov rdi, [rdx + 80]
+    
+    # Restore VM call stack depth
+    mov rax, [rdx + 120]
+    mov [rip + call_sp], rax
+    ret
+
+fiber_entry_trampoline:
+    mov r8, [rip + current_fiber_id]
+    lea rax, [rip + fiber_table]
+    mov rcx, [rax + r8 * 8]     # rcx = current FCB
+    mov r10, [rcx + 96]         # call_sp_base
+    mov [rip + call_sp], r10
+    NEXT
+
+.fiber_terminate:
+    mov r8, [rip + current_fiber_id]
+    lea rax, [rip + fiber_table]
+    mov rcx, [rax + r8 * 8]     # rcx = current FCB
+    
+    # Record return value from r0
+    mov r9, [rdi + 0 * 8]
+    mov [rcx + 104], r9
+    mov qword ptr [rcx + 8], 3  # state = 3 (TERMINATED)
+    
+    # Wake up waiter if any
+    mov r10, [rcx + 112]        # waiter_fid
+    cmp r10, -1
+    je .fiber_sched_next
+    mov r11, [rax + r10 * 8]    # waiter FCB
+    test r11, r11
+    jz .fiber_sched_next
+    mov qword ptr [r11 + 8], 0  # waiter state = READY
+    
+    mov rax, [rip + ready_tail]
+    lea rdx, [rip + fiber_ready_queue]
+    mov [rdx + rax * 8], r10
+    inc rax
+    and rax, 8191
+    mov [rip + ready_tail], rax
+    inc qword ptr [rip + ready_count]
+
+.fiber_sched_next:
+    mov rax, [rip + ready_count]
+    test rax, rax
+    jz .fiber_switch_main
+    
+    mov r8, [rip + ready_head]
+    lea rdx, [rip + fiber_ready_queue]
+    mov r9, [rdx + r8 * 8]      # next_fid
+    inc r8
+    and r8, 8191
+    mov [rip + ready_head], r8
+    dec qword ptr [rip + ready_count]
+    
+    mov [rip + current_fiber_id], r9
+    lea rax, [rip + fiber_table]
+    mov rdx, [rax + r9 * 8]     # to_fcb
+    mov qword ptr [rdx + 8], 1  # state = RUNNING
+    call fiber_switch_context
+    NEXT
+
+.fiber_switch_main:
+    mov qword ptr [rip + current_fiber_id], 0
+    lea rax, [rip + fiber_table]
+    mov rdx, [rax]              # main FCB
+    mov qword ptr [rdx + 8], 1  # state = RUNNING
+    call fiber_switch_context
+    NEXT
+
+op_fiber_spawn:
+    mov r12, [rsi]       # dest_reg
+    mov r13, [rsi+8]     # fn_reg
+    add rsi, 16
+    
+    call ensure_scheduler_init
+    
+    # Allocate 128-byte FCB
+    mov rcx, 128
+    sub rsp, 40
+    call malloc
+    add rsp, 40
+    mov r15, rax         # r15 = new FCB
+    
+    mov rax, [rip + fiber_count]
+    mov [r15 + 0], rax   # fcb->fid
+    inc qword ptr [rip + fiber_count]
+    mov qword ptr [r15 + 8], 0   # state = READY
+    
+    mov rdx, [r15 + 0]
+    shl rdx, 10          # fid * 1024
+    mov [r15 + 96], rdx  # call_sp_base
+    mov qword ptr [r15 + 104], 0 # return_val
+    mov qword ptr [r15 + 112], -1 # waiter_fid
+    mov [r15 + 120], rdx # initial call_sp
+    
+    # Resolve target PC from fn_reg (r13)
+    movsd xmm0, [rdi + r13 * 8]
+    cvttsd2si r14, xmm0
+    test r14, r14
+    jnz .f_have_offset
+    
+    mov r14, [rdi + r13 * 8]
+    mov r8, 0x00007FFFFFFFFFFF
+    cmp r14, 0x10000
+    jb .f_have_offset
+    cmp r14, r8
+    jbe .f_have_direct_ptr
+
+.f_have_offset:
+    mov r10, [rip + active_dynamic_buf]
+    test r10, r10
+    jnz 4f
+    mov r10, [rbx + 70 * 8]
+    test r10, r10
+    jnz 4f
+    mov r10, [rdi + 70 * 8]
+    test r10, r10
+    jnz 4f
+    mov r10, [rip + vm_bytecode_base]
+4:
+    lea rax, [r10 + r14]
+    jmp 5f
+
+.f_have_direct_ptr:
+    mov rax, r14
+
+5:
+    mov [r15 + 72], rax  # saved_rsi = target PC
+    
+    # Allocate 4KB stack
+    mov rcx, 4096
+    sub rsp, 40
+    call malloc
+    add rsp, 40
+    mov [r15 + 88], rax  # stack_base
+    lea rdx, [rax + 4096]
+    and rdx, -16         # 16-byte align
+    sub rdx, 48          # shadow space (32) + ret addr (8) + align (8)
+    lea r11, [rip + fiber_entry_trampoline]
+    mov [rdx], r11
+    mov [r15 + 16], rdx  # saved_rsp
+    mov [r15 + 24], rdx  # saved_rbp
+    mov [r15 + 32], rbx  # saved_rbx
+    mov [r15 + 80], rdi  # saved_rdi
+    
+    # Store into fiber_table
+    mov rdx, [r15 + 0]   # fid
+    lea rax, [rip + fiber_table]
+    mov [rax + rdx * 8], r15
+    
+    # Enqueue to fiber_ready_queue
+    mov rax, [rip + ready_tail]
+    lea rcx, [rip + fiber_ready_queue]
+    mov [rcx + rax * 8], rdx
+    inc rax
+    and rax, 8191
+    mov [rip + ready_tail], rax
+    inc qword ptr [rip + ready_count]
+    
+    # Return fid to dest_reg
+    cvtsi2sd xmm0, rdx
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_fiber_yield:
+    mov rax, [rip + ready_count]
+    test rax, rax
+    jz .yield_noop
+    
+    mov r8, [rip + current_fiber_id]
+    mov rax, [rip + ready_tail]
+    lea rdx, [rip + fiber_ready_queue]
+    mov [rdx + rax * 8], r8
+    inc rax
+    and rax, 8191
+    mov [rip + ready_tail], rax
+    inc qword ptr [rip + ready_count]
+    
+    mov r8, [rip + ready_head]
+    lea rdx, [rip + fiber_ready_queue]
+    mov r9, [rdx + r8 * 8]       # next_fid
+    inc r8
+    and r8, 8191
+    mov [rip + ready_head], r8
+    dec qword ptr [rip + ready_count]
+    
+    lea rax, [rip + fiber_table]
+    mov r10, [rip + current_fiber_id]
+    mov rcx, [rax + r10 * 8]     # from_fcb
+    mov rdx, [rax + r9 * 8]      # to_fcb
+    mov qword ptr [rcx + 8], 0   # state = READY
+    mov qword ptr [rdx + 8], 1   # state = RUNNING
+    mov [rip + current_fiber_id], r9
+    call fiber_switch_context
+
+.yield_noop:
+    NEXT
+
+op_fiber_await:
+    mov r12, [rsi]       # dest_reg
+    mov r13, [rsi+8]     # fid_reg
+    add rsi, 16
+    
+    movsd xmm0, [rdi + r13 * 8]
+    cvttsd2si r14, xmm0
+    test r14, r14
+    jnz 1f
+    mov r14, [rbx + r13 * 8]
+1:
+    lea rax, [rip + fiber_table]
+    mov rcx, [rax + r14 * 8]     # target FCB
+    test rcx, rcx
+    jz .await_bad_fid
+    
+.await_check_state:
+    cmp qword ptr [rcx + 8], 3   # TERMINATED?
+    je .await_finished
+    
+    mov r8, [rip + current_fiber_id]
+    mov [rcx + 112], r8          # target->waiter_fid = current_fiber_id
+    lea rax, [rip + fiber_table]
+    mov r9, [rax + r8 * 8]       # current FCB
+    mov qword ptr [r9 + 8], 2    # state = BLOCKED
+    
+    mov rax, [rip + ready_count]
+    test rax, rax
+    jz .await_spin
+    
+    mov r8, [rip + ready_head]
+    lea rdx, [rip + fiber_ready_queue]
+    mov r10, [rdx + r8 * 8]
+    inc r8
+    and r8, 8191
+    mov [rip + ready_head], r8
+    dec qword ptr [rip + ready_count]
+    
+    mov [rip + current_fiber_id], r10
+    lea rax, [rip + fiber_table]
+    mov rdx, [rax + r10 * 8]     # to_fcb
+    mov qword ptr [rdx + 8], 1   # state = RUNNING
+    mov rcx, r9                  # from_fcb
+    call fiber_switch_context
+    
+    lea rax, [rip + fiber_table]
+    mov rcx, [rax + r14 * 8]
+    jmp .await_check_state
+
+.await_spin:
+    pause
+    jmp .await_check_state
+
+.await_finished:
+    mov rax, [rcx + 104]         # return_val
+    mov [rdi + r12 * 8], rax
+    NEXT
+
+.await_bad_fid:
+    xorps xmm0, xmm0
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+# ---------------------------------------------------------
+# LOCK-FREE MESSAGE CHANNELS (CSP / Actor Model)
+# ---------------------------------------------------------
+
+op_chan_new:
+    mov r12, [rsi]       # dest_reg
+    mov r13, [rsi+8]     # cap_reg
+    add rsi, 16
+    
+    movsd xmm0, [rdi + r13 * 8]
+    cvttsd2si r8, xmm0
+    test r8, r8
+    jg 1f
+    mov r8, 64
+1:
+    mov rax, 16
+.cn_pow2:
+    cmp rax, r8
+    jae .cn_pow2_done
+    shl rax, 1
+    jmp .cn_pow2
+.cn_pow2_done:
+    mov r15, rax          # r15 = power of 2 capacity (non-volatile)
+    
+    mov rcx, r15
+    shl rcx, 5           # * 32
+    add rcx, 40          # + 40
+    
+    sub rsp, 40
+    call malloc
+    add rsp, 40
+    mov r14, rax
+    
+    mov [r14 + 0], r15    # capacity
+    lea rax, [r15 - 1]
+    mov [r14 + 8], rax   # mask
+    mov qword ptr [r14 + 16], 0 # head
+    mov qword ptr [r14 + 24], 0 # tail
+    mov qword ptr [r14 + 32], 0 # closed
+    
+    xor ecx, ecx
+    lea rdx, [r14 + 40]
+.cn_cell_init:
+    cmp rcx, r15
+    jge .cn_cell_done
+    mov [rdx], rcx
+    mov qword ptr [rdx + 8], 0
+    mov qword ptr [rdx + 16], 0
+    mov qword ptr [rdx + 24], 0
+    add rdx, 32
+    inc rcx
+    jmp .cn_cell_init
+.cn_cell_done:
+    mov [rdi + r12 * 8], r14
+    mov [rbx + r12 * 8], r14
+    NEXT
+
+op_chan_send:
+    mov r12, [rsi]       # dest_reg
+    mov r13, [rsi+8]     # chan_reg
+    mov r14, [rsi+16]    # val_reg
+    add rsi, 24
+    
+    mov rcx, [rbx + r13 * 8]
+    test rcx, rcx
+    jnz 1f
+    mov rcx, [rdi + r13 * 8]
+1:
+    test rcx, rcx
+    jz .cs_fail
+    
+    mov r8, [rdi + r14 * 8]
+    mov r9, [rbx + r14 * 8]
+    
+.cs_retry:
+    mov r10, [rcx + 16]         # head
+    mov r11, [rcx + 8]          # mask
+    mov rax, r10
+    and rax, r11
+    shl rax, 5
+    lea rdx, [rcx + 40 + rax]   # cell
+    
+    mov rax, [rdx]              # cell->sequence
+    mov r15, rax
+    sub r15, r10
+    test r15, r15
+    jz .cs_try_cas
+    js .cs_full
+    pause
+    jmp .cs_retry
+
+.cs_try_cas:
+    lea r15, [r10 + 1]
+    mov rax, r10
+    lock cmpxchg [rcx + 16], r15
+    jnz .cs_retry
+    
+    mov [rdx + 8], r8
+    mov [rdx + 16], r9
+    inc r10
+    mov [rdx], r10
+    
+    mov rax, 1
+    cvtsi2sd xmm0, rax
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+.cs_full:
+    xorps xmm0, xmm0
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+.cs_fail:
+    xorps xmm0, xmm0
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_chan_recv:
+    mov r12, [rsi]       # dest_reg
+    mov r13, [rsi+8]     # chan_reg
+    add rsi, 16
+    
+    mov rcx, [rbx + r13 * 8]
+    test rcx, rcx
+    jnz 1f
+    mov rcx, [rdi + r13 * 8]
+1:
+    test rcx, rcx
+    jz .cr_fail
+
+.cr_retry:
+    mov r10, [rcx + 24]         # tail
+    mov r11, [rcx + 8]          # mask
+    mov rax, r10
+    and rax, r11
+    shl rax, 5
+    lea rdx, [rcx + 40 + rax]   # cell
+    
+    mov rax, [rdx]              # cell->sequence
+    lea r15, [r10 + 1]
+    sub rax, r15
+    test rax, rax
+    jz .cr_try_cas
+    js .cr_empty
+    pause
+    jmp .cr_retry
+
+.cr_try_cas:
+    lea r15, [r10 + 1]
+    mov rax, r10
+    lock cmpxchg [rcx + 24], r15
+    jnz .cr_retry
+    
+    mov r8, [rdx + 8]
+    
+    mov rax, [rcx + 8]
+    inc rax
+    add rax, r10
+    mov [rdx], rax
+    
+    mov [rdi + r12 * 8], r8
+    NEXT
+
+.cr_empty:
+    cmp qword ptr [rcx + 32], 1
+    je .cr_closed
+    xorps xmm0, xmm0
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+.cr_closed:
+    mov rax, -1
+    cvtsi2sd xmm0, rax
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+.cr_fail:
+    xorps xmm0, xmm0
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_chan_len:
+    mov r12, [rsi]       # dest_reg
+    mov r13, [rsi+8]     # chan_reg
+    add rsi, 16
+    
+    mov rcx, [rbx + r13 * 8]
+    test rcx, rcx
+    jnz 1f
+    mov rcx, [rdi + r13 * 8]
+1:
+    test rcx, rcx
+    jz .cl_zero
+    
+    mov rax, [rcx + 16]  # head
+    sub rax, [rcx + 24]  # tail
+    jns 2f
+    xor eax, eax
+2:
+    cvtsi2sd xmm0, rax
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+.cl_zero:
+    xorps xmm0, xmm0
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_chan_close:
+    mov r13, [rsi]       # chan_reg
+    add rsi, 8
+    
+    mov rcx, [rbx + r13 * 8]
+    test rcx, rcx
+    jnz 1f
+    mov rcx, [rdi + r13 * 8]
+1:
+    test rcx, rcx
+    jz .cc_done
+    mov qword ptr [rcx + 32], 1  # closed = 1
+.cc_done:
+    NEXT
+
+# ---------------------------------------------------------
+# HIGH-PERFORMANCE ASYNC EVENT LOOP (Windows IOCP)
+# ---------------------------------------------------------
+
+op_iocp_init:
+    mov r12, [rsi]
+    add rsi, 8
+    
+    call wsa_ensure_init
+    
+    mov rcx, -1
+    xor edx, edx
+    xor r8d, r8d
+    xor r9d, r9d
+    sub rsp, 40
+    call CreateIoCompletionPort
+    add rsp, 40
+    mov [rip + iocp_global_handle], rax
+    cvtsi2sd xmm0, rax
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_iocp_poll:
+    mov r12, [rsi]       # dest_reg
+    mov r13, [rsi+8]     # timeout_ms_reg
+    add rsi, 16
+    
+    mov rax, [rip + iocp_global_handle]
+    test rax, rax
+    jnz 1f
+    call wsa_ensure_init
+    mov rcx, -1
+    xor edx, edx
+    xor r8d, r8d
+    xor r9d, r9d
+    sub rsp, 40
+    call CreateIoCompletionPort
+    add rsp, 40
+    mov [rip + iocp_global_handle], rax
+1:
+    movsd xmm0, [rdi + r13 * 8]
+    cvttsd2si r14, xmm0
+    
+    mov rcx, [rip + iocp_global_handle]
+    lea rdx, [rip + iocp_bytes_transferred]
+    lea r8,  [rip + iocp_completion_key]
+    lea r9,  [rip + iocp_overlapped]
+    sub rsp, 40
+    mov [rsp + 32], r14
+    call GetQueuedCompletionStatus
+    add rsp, 40
+    test eax, eax
+    jz .ip_timeout
+    
+    mov eax, [rip + iocp_bytes_transferred]
+    test eax, eax
+    jnz 2f
+    mov rax, [rip + iocp_completion_key]
+2:
+    cvtsi2sd xmm0, rax
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+.ip_timeout:
+    xorps xmm0, xmm0
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_async_listen:
+    mov r12, [rsi]       # dest_reg
+    mov r13, [rsi+8]     # port_reg
+    mov r14, [rsi+16]    # backlog_reg
+    add rsi, 24
+    
+    call wsa_ensure_init
+    
+    cmp qword ptr [rip + iocp_global_handle], 0
+    jnz 1f
+    mov rcx, -1
+    xor edx, edx
+    xor r8d, r8d
+    xor r9d, r9d
+    sub rsp, 40
+    call CreateIoCompletionPort
+    add rsp, 40
+    mov [rip + iocp_global_handle], rax
+1:
+    movsd xmm0, [rdi + r13 * 8]
+    cvttsd2si rcx, xmm0
+    sub rsp, 40
+    call tcp_listen_asm
+    add rsp, 40
+    cmp rax, -1
+    je .al_fail
+    
+    mov r15, rax         # socket
+    
+    mov rcx, r15
+    mov edx, 0x8004667E  # FIONBIO
+    lea r8,  [rip + sock_nonblocking_mode]
+    sub rsp, 40
+    call ioctlsocket
+    add rsp, 40
+    
+    mov rcx, r15
+    mov rdx, [rip + iocp_global_handle]
+    mov r8,  r15
+    xor r9d, r9d
+    sub rsp, 40
+    call CreateIoCompletionPort
+    add rsp, 40
+    
+    cvtsi2sd xmm0, r15
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+.al_fail:
+    mov rax, -1
+    cvtsi2sd xmm0, rax
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_async_accept:
+    mov r12, [rsi]       # dest_reg
+    mov r13, [rsi+8]     # listen_sock_reg
+    add rsi, 16
+    
+    movsd xmm0, [rdi + r13 * 8]
+    cvttsd2si rcx, xmm0
+    test rcx, rcx
+    jnz 1f
+    mov rcx, [rbx + r13 * 8]
+1:
+    xor edx, edx
+    xor r8d, r8d
+    sub rsp, 40
+    call accept
+    add rsp, 40
+    cmp rax, -1
+    je .aa_wouldblock
+    
+    mov r15, rax         # client socket
+    
+    mov rcx, r15
+    mov edx, 0x8004667E  # FIONBIO
+    lea r8,  [rip + sock_nonblocking_mode]
+    sub rsp, 40
+    call ioctlsocket
+    add rsp, 40
+    
+    mov rcx, r15
+    mov rdx, [rip + iocp_global_handle]
+    mov r8,  r15
+    xor r9d, r9d
+    sub rsp, 40
+    call CreateIoCompletionPort
+    add rsp, 40
+    
+    mov rcx, [rip + iocp_global_handle]
+    mov edx, 1
+    mov r8,  r15
+    xor r9d, r9d
+    sub rsp, 40
+    call PostQueuedCompletionStatus
+    add rsp, 40
+    
+    cvtsi2sd xmm0, r15
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+.aa_wouldblock:
+    mov rax, -1
+    cvtsi2sd xmm0, rax
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+op_async_recv:
+    mov r12, [rsi]       # dest_reg
+    mov r13, [rsi+8]     # sock_reg
+    mov r14, [rsi+16]    # max_len_reg
+    add rsi, 24
+    
+    movsd xmm0, [rdi + r13 * 8]
+    cvttsd2si rcx, xmm0
+    test rcx, rcx
+    jnz 1f
+    mov rcx, [rbx + r13 * 8]
+1:
+    mov r15, rcx
+    
+    movsd xmm0, [rdi + r14 * 8]
+    cvttsd2si r8, xmm0
+    test r8, r8
+    jg 2f
+    mov r8, 4096
+2:
+    push r15
+    push r8
+    push r12
+    sub rsp, 32
+    lea rcx, [r8 + 1]
+    xor rdx, rdx
+    call gc_malloc
+    add rsp, 32
+    pop r12
+    pop r8
+    pop r15
+    mov r13, rax
+    
+    sub rsp, 40
+    mov rcx, r15
+    mov rdx, r13
+    xor r9d, r9d
+    call recv
+    add rsp, 40
+    cmp eax, 0
+    jle .ar_empty
+    
+    mov byte ptr [r13 + rax], 0
+    mov r10, 0x535452494E47
+    mov [r13 - 32], r10
+    cvtsi2sd xmm0, rax
+    movsd [r13 - 16], xmm0
+    mov [rdi + r12 * 8], r13
+    mov [rbx + r12 * 8], r13
+    NEXT
+
+.ar_empty:
+    lea rax, [rip + empty_str]
+    mov [rdi + r12 * 8], rax
+    mov [rbx + r12 * 8], rax
+    NEXT
+
+op_async_send:
+    mov r12, [rsi]       # dest_reg
+    mov r13, [rsi+8]     # sock_reg
+    mov r14, [rsi+16]    # data_reg
+    add rsi, 24
+    
+    movsd xmm0, [rdi + r13 * 8]
+    cvttsd2si rcx, xmm0
+    test rcx, rcx
+    jnz 1f
+    mov rcx, [rbx + r13 * 8]
+1:
+    mov r15, rcx
+    
+    mov rdx, [rbx + r14 * 8]
+    test rdx, rdx
+    jnz 2f
+    mov rdx, [rdi + r14 * 8]
+2:
+    mov r8, rdx
+.as_len_loop:
+    cmp byte ptr [r8], 0
+    je .as_len_done
+    inc r8
+    jmp .as_len_loop
+.as_len_done:
+    sub r8, rdx
+    
+    mov rcx, r15
+    xor r9d, r9d
+    sub rsp, 40
+    call send
+    add rsp, 40
+    cmp rax, 0
+    jle .as_fail
+    
+    mov rcx, [rip + iocp_global_handle]
+    mov edx, eax
+    mov r8,  r15
+    xor r9d, r9d
+    sub rsp, 40
+    call PostQueuedCompletionStatus
+    add rsp, 40
+    
+    cvtsi2sd xmm0, rax
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
+.as_fail:
+    xorps xmm0, xmm0
+    movsd [rdi + r12 * 8], xmm0
+    NEXT
+
 op_ret_dynamic:
+    mov r8, [rip + current_fiber_id]
+    test r8, r8
+    jnz .fiber_op_ret_dynamic
     lea r8, [rip + call_sp]
     mov r9, [r8]
     test r9, r9
@@ -10407,6 +11283,20 @@ op_ret_dynamic:
     mov [r8], r9
     lea r10, [rip + call_stack]
     mov rsi, [r10 + r9 * 8]
+    NEXT
+
+.fiber_op_ret_dynamic:
+    lea rax, [rip + fiber_table]
+    mov rcx, [rax + r8 * 8]
+    mov r10, [rcx + 96]
+    lea r8, [rip + call_sp]
+    mov r9, [r8]
+    cmp r9, r10
+    jle .fiber_terminate
+    dec r9
+    mov [r8], r9
+    lea r11, [rip + call_stack]
+    mov rsi, [r11 + r9 * 8]
     NEXT
 
 .ret_dynamic_underflow:
@@ -10673,6 +11563,8 @@ main:
     call malloc
     mov r12, rax
     mov r13, rax
+    mov [rip + vm_bytecode_base], rax
+    mov dword ptr [rip + sock_nonblocking_mode], 1
 
     # Allocate Fast Bump Arena (512MB)
     mov rcx, 536870912
@@ -10973,6 +11865,8 @@ fgets:
     je .check_FOPEN
     cmp al, 'H'
     je .check_HALT
+    cmp al, 'I'
+    je .check_IOCP_INIT
     jmp .print_bad_token
     
 .comment_loop:
@@ -12021,7 +12915,7 @@ fgets:
     lea rdx, [rip + str_ALLOC]
     call strcmp
     cmp eax, 0
-    jne .print_bad_token
+    jne .check_ASYNC_LISTEN
     
     lea rax, [rip + op_alloc]
     mov [r13], rax
@@ -12044,6 +12938,89 @@ fgets:
     lea rcx, [rip + reg_buf]
     call atoi
     movsxd rax, eax
+    mov [r13], rax
+    add r13, 8
+    jmp .read_loop
+
+.check_ASYNC_LISTEN:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_ASYNC_LISTEN]
+    call strcmp
+    test eax, eax
+    jne .check_ASYNC_ACCEPT
+    lea rax, [rip + op_async_listen]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_ASYNC_ACCEPT:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_ASYNC_ACCEPT]
+    call strcmp
+    test eax, eax
+    jne .check_ASYNC_RECV
+    lea rax, [rip + op_async_accept]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_ASYNC_RECV:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_ASYNC_RECV]
+    call strcmp
+    test eax, eax
+    jne .check_ASYNC_SEND
+    lea rax, [rip + op_async_recv]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_ASYNC_SEND:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_ASYNC_SEND]
+    call strcmp
+    test eax, eax
+    jne .check_IOCP_INIT
+    lea rax, [rip + op_async_send]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_IOCP_INIT:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_IOCP_INIT]
+    call strcmp
+    test eax, eax
+    jne .check_IOCP_POLL
+    lea rax, [rip + op_iocp_init]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_IOCP_POLL:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_IOCP_POLL]
+    call strcmp
+    test eax, eax
+    jne .print_bad_token
+    lea rax, [rip + op_iocp_poll]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
     mov [r13], rax
     add r13, 8
     jmp .read_loop
@@ -12178,7 +13155,7 @@ fgets:
     lea rdx, [rip + str_FREE]
     call strcmp
     cmp eax, 0
-    jne .print_bad_token
+    jne .check_FIBER_SPAWN
     
     lea rax, [rip + op_free]
     mov [r13], rax
@@ -12193,6 +13170,43 @@ fgets:
     movsxd rax, eax
     mov [r13], rax
     add r13, 8
+    jmp .read_loop
+
+.check_FIBER_SPAWN:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_FIBER_SPAWN]
+    call strcmp
+    test eax, eax
+    jne .check_FIBER_YIELD
+    lea rax, [rip + op_fiber_spawn]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_FIBER_YIELD:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_FIBER_YIELD]
+    call strcmp
+    test eax, eax
+    jne .check_FIBER_AWAIT
+    lea rax, [rip + op_fiber_yield]
+    mov [r13], rax
+    add r13, 8
+    jmp .read_loop
+
+.check_FIBER_AWAIT:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_FIBER_AWAIT]
+    call strcmp
+    test eax, eax
+    jne .print_bad_token
+    lea rax, [rip + op_fiber_await]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
     jmp .read_loop
 
 .check_LOAD_B:
@@ -13372,8 +14386,134 @@ fgets:
     lea rdx, [rip + str_REGION_ALLOC]
     call strcmp
     test eax, eax
-    jne .check_GET_OP_NOT_FOUND
+    jne .check_GET_OP_FIBER_SPAWN
     lea r15, [rip + op_region_alloc]
+    jmp .get_op_found
+
+.check_GET_OP_FIBER_SPAWN:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_FIBER_SPAWN]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_FIBER_YIELD
+    lea r15, [rip + op_fiber_spawn]
+    jmp .get_op_found
+
+.check_GET_OP_FIBER_YIELD:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_FIBER_YIELD]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_FIBER_AWAIT
+    lea r15, [rip + op_fiber_yield]
+    jmp .get_op_found
+
+.check_GET_OP_FIBER_AWAIT:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_FIBER_AWAIT]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_CHAN_NEW
+    lea r15, [rip + op_fiber_await]
+    jmp .get_op_found
+
+.check_GET_OP_CHAN_NEW:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_CHAN_NEW]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_CHAN_SEND
+    lea r15, [rip + op_chan_new]
+    jmp .get_op_found
+
+.check_GET_OP_CHAN_SEND:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_CHAN_SEND]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_CHAN_RECV
+    lea r15, [rip + op_chan_send]
+    jmp .get_op_found
+
+.check_GET_OP_CHAN_RECV:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_CHAN_RECV]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_CHAN_LEN
+    lea r15, [rip + op_chan_recv]
+    jmp .get_op_found
+
+.check_GET_OP_CHAN_LEN:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_CHAN_LEN]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_CHAN_CLOSE
+    lea r15, [rip + op_chan_len]
+    jmp .get_op_found
+
+.check_GET_OP_CHAN_CLOSE:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_CHAN_CLOSE]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_IOCP_INIT
+    lea r15, [rip + op_chan_close]
+    jmp .get_op_found
+
+.check_GET_OP_IOCP_INIT:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_IOCP_INIT]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_IOCP_POLL
+    lea r15, [rip + op_iocp_init]
+    jmp .get_op_found
+
+.check_GET_OP_IOCP_POLL:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_IOCP_POLL]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_ASYNC_LISTEN
+    lea r15, [rip + op_iocp_poll]
+    jmp .get_op_found
+
+.check_GET_OP_ASYNC_LISTEN:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_ASYNC_LISTEN]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_ASYNC_ACCEPT
+    lea r15, [rip + op_async_listen]
+    jmp .get_op_found
+
+.check_GET_OP_ASYNC_ACCEPT:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_ASYNC_ACCEPT]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_ASYNC_RECV
+    lea r15, [rip + op_async_accept]
+    jmp .get_op_found
+
+.check_GET_OP_ASYNC_RECV:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_ASYNC_RECV]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_ASYNC_SEND
+    lea r15, [rip + op_async_recv]
+    jmp .get_op_found
+
+.check_GET_OP_ASYNC_SEND:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_ASYNC_SEND]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_NOT_FOUND
+    lea r15, [rip + op_async_send]
     jmp .get_op_found
 
 .check_GET_OP_NOT_FOUND:
@@ -13403,7 +14543,7 @@ fgets:
     lea rdx, [rip + str_CALL]
     call strcmp
     cmp eax, 0
-    jne .print_bad_token
+    jne .check_CHAN_NEW
     
     lea rax, [rip + op_call]
     mov [r13], rax
@@ -13418,6 +14558,71 @@ fgets:
     movsxd rax, eax
     mov [r13], rax
     add r13, 8
+    jmp .read_loop
+
+.check_CHAN_NEW:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_CHAN_NEW]
+    call strcmp
+    test eax, eax
+    jne .check_CHAN_SEND
+    lea rax, [rip + op_chan_new]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_CHAN_SEND:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_CHAN_SEND]
+    call strcmp
+    test eax, eax
+    jne .check_CHAN_RECV
+    lea rax, [rip + op_chan_send]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_CHAN_RECV:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_CHAN_RECV]
+    call strcmp
+    test eax, eax
+    jne .check_CHAN_LEN
+    lea rax, [rip + op_chan_recv]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_CHAN_LEN:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_CHAN_LEN]
+    call strcmp
+    test eax, eax
+    jne .check_CHAN_CLOSE
+    lea rax, [rip + op_chan_len]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_CHAN_CLOSE:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_CHAN_CLOSE]
+    call strcmp
+    test eax, eax
+    jne .print_bad_token
+    lea rax, [rip + op_chan_close]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
     jmp .read_loop
 
 .check_RET:
