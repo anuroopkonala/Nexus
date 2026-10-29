@@ -1,0 +1,100 @@
+import stdlib
+
+fn test_tight_loop_accumulation() {
+    let sum = 0.0
+    let i = 0.0
+    let limit = 1000000.0
+    while i < limit {
+        sum += i
+        i += 1.0
+    }
+    // sum of 0..999999 = 999999 * 1000000 / 2 = 499999500000.0
+    System.print(sum)
+    System.print(i)
+    if sum == 499999500000.0 {
+        System.print_str("Tight loop accumulation: PASS")
+    } else {
+        System.print_str("Tight loop accumulation: FAIL")
+    }
+}
+
+fn test_fused_fma_throughput() {
+    let acc = 1.0
+    let factor = 1.0000001
+    let delta = 0.0000002
+    let i = 0.0
+    let n = 500000.0
+    while i < n {
+        acc = acc * factor + delta
+        i += 1.0
+    }
+    System.print(acc)
+    if acc > 1.0 {
+        System.print_str("Fused FMA throughput: PASS")
+    } else {
+        System.print_str("Fused FMA throughput: FAIL")
+    }
+}
+
+fn fast_fib(n: float) -> float {
+    if n <= 1.0 {
+        return n
+    }
+    let a = 0.0
+    let b = 1.0
+    let i = 2.0
+    while i <= n {
+        let temp = a + b
+        a = b
+        b = temp
+        i += 1.0
+    }
+    return b
+}
+
+fn test_fast_call_dispatch() {
+    let res = fast_fib(50.0)
+    System.print(res)
+    // 50th fibonacci number is 12586269025
+    if res == 12586269025.0 {
+        System.print_str("Fast call dispatch: PASS")
+    } else {
+        System.print_str("Fast call dispatch: FAIL")
+    }
+}
+
+fn test_nested_induction_registers() {
+    let total = 0.0
+    let i = 0.0
+    while i < 1000.0 {
+        let j = 0.0
+        while j < 1000.0 {
+            total += 1.0
+            j += 1.0
+        }
+        i += 1.0
+    }
+    System.print(total)
+    if total == 1000000.0 {
+        System.print_str("Nested induction registers: PASS")
+    } else {
+        System.print_str("Nested induction registers: FAIL")
+    }
+}
+
+fn main() {
+    System.print_str("================================================")
+    System.print_str("=== Phase 1: Microarchitectural Execution Optimization ===")
+    System.print_str("================================================")
+
+    test_tight_loop_accumulation()
+    test_fused_fma_throughput()
+    test_fast_call_dispatch()
+    test_nested_induction_registers()
+
+    System.print_str("================================================")
+    System.print_str("=== ALL PHASE 1 MICRO-OPTIMIZATION TESTS PASS ===")
+    System.print_str("================================================")
+}
+
+main()

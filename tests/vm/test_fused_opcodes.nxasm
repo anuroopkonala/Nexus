@@ -1,0 +1,45 @@
+# Phase 1: Microarchitectural Bytecode Fusion Test
+# Register Setup
+LOAD 10.0 1
+LOAD 20.0 2
+
+# FUSED_ADD_MEM: dest = src_a + src_b (10 + 20 = 30)
+FUSED_ADD_MEM 3 1 2
+PRINT 3
+
+# FUSED_MUL_MEM: dest = src_a * src_b (30 * 20 = 600)
+FUSED_MUL_MEM 4 3 2
+PRINT 4
+
+# FUSED_INC_STORE: dest = src + inc (600 + 10 = 610)
+FUSED_INC_STORE 5 4 1
+PRINT 5
+
+# FUSED_JMP_LT: Loop test
+# reg 6 = counter (0), reg 7 = limit (5), reg 8 = step (1)
+LOAD 0.0 6
+LOAD 5.0 7
+LOAD 1.0 8
+
+LABEL 10
+# Loop body: increment counter
+FUSED_INC_STORE 6 6 8
+PRINT 6
+# If counter >= limit, jump to exit (label 20)
+FUSED_JMP_LT 6 7 20 0
+JMP 10
+
+LABEL 20
+LOAD 999.0 9
+PRINT 9
+
+# FUSED_FASTCALL_2 test: Call function at label 30
+FUSED_FASTCALL_2 30 0
+LOAD 888.0 10
+PRINT 10
+HALT
+
+LABEL 30
+LOAD 777.0 11
+PRINT 11
+RET

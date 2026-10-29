@@ -358,6 +358,12 @@ str_STORE_PTR_O: .asciz "STORE_PTR_O"
 str_PUSH_PTR: .asciz "PUSH_PTR"
 str_POP_PTR: .asciz "POP_PTR"
 
+str_FUSED_ADD_MEM: .asciz "FUSED_ADD_MEM"
+str_FUSED_MUL_MEM: .asciz "FUSED_MUL_MEM"
+str_FUSED_JMP_LT: .asciz "FUSED_JMP_LT"
+str_FUSED_INC_STORE: .asciz "FUSED_INC_STORE"
+str_FUSED_FASTCALL_2: .asciz "FUSED_FASTCALL_2"
+
 
 
 
@@ -438,12 +444,134 @@ next_fmt: .asciz "Executing: %p\n"
 
 .text
 .macro NEXT
+    prefetcht0 [rsi + 16]
     mov rax, [rsi]
     add rsi, 8
     jmp rax
 .endm
 
+# --- Phase 1: Fused Microarchitectural Superinstructions ---
+
+.globl op_fused_add_mem
+.align 64
+op_fused_add_mem:
+    mov r8,  [rsi]       # dest
+    mov r9,  [rsi+8]     # src_a
+    mov r10, [rsi+16]    # src_b
+    add rsi, 24
+    movsd xmm0, [rdi + r9 * 8]
+    addsd xmm0, [rdi + r10 * 8]
+    movsd [rdi + r8 * 8], xmm0
+    NEXT
+
+.globl op_fused_mul_mem
+.align 64
+op_fused_mul_mem:
+    mov r8,  [rsi]       # dest
+    mov r9,  [rsi+8]     # src_a
+    mov r10, [rsi+16]    # src_b
+    add rsi, 24
+    movsd xmm0, [rdi + r9 * 8]
+    mulsd xmm0, [rdi + r10 * 8]
+    movsd [rdi + r8 * 8], xmm0
+    NEXT
+
+.globl op_fused_jmp_lt
+.align 64
+op_fused_jmp_lt:
+    mov r8,  [rsi]       # src_a
+    mov r9,  [rsi+8]     # src_b
+    mov rcx, [rsi+16]    # base_reg / target
+    mov r10, [rsi+24]    # offset
+    add rsi, 32
+    movsd xmm0, [rdi + r8 * 8]
+    movsd xmm1, [rdi + r9 * 8]
+    comisd xmm0, xmm1
+    jae .fused_lt_do_jump
+    NEXT
+.fused_lt_do_jump:
+    test r10, r10
+    jnz .fused_lt_offset
+    cmp rcx, 524280
+    jae .fused_lt_direct_ptr
+    lea rax, [rip + labels_array]
+    mov rsi, [rax + rcx * 8]
+    test rsi, rsi
+    jnz .fused_lt_done
+.fused_lt_offset:
+    cmp rcx, 8192
+    jae .fused_lt_direct_ptr
+    mov r9, [rbx + rcx * 8]
+    test r9, r9
+    jnz 1f
+    mov r9, [rdi + rcx * 8]
+1:
+    test r9, r9
+    jz .fused_lt_no_jump
+    lea rsi, [r9 + r10]
+    NEXT
+.fused_lt_direct_ptr:
+    mov rsi, rcx
+.fused_lt_done:
+    NEXT
+.fused_lt_no_jump:
+    NEXT
+
+.globl op_fused_inc_store
+.align 64
+op_fused_inc_store:
+    mov r8,  [rsi]       # dest_reg
+    mov r9,  [rsi+8]     # src_reg
+    mov r10, [rsi+16]    # inc_reg
+    add rsi, 24
+    movsd xmm0, [rdi + r9 * 8]
+    addsd xmm0, [rdi + r10 * 8]
+    movsd [rdi + r8 * 8], xmm0
+    NEXT
+
+.globl op_fused_fastcall_2
+.align 64
+op_fused_fastcall_2:
+    mov r8,  [rsi]       # fn_target (base_reg or direct ptr)
+    mov r9,  [rsi+8]     # offset
+    add rsi, 16
+    
+    lea rcx, [rip + call_sp]
+    mov rdx, [rcx]
+    cmp rdx, 524280
+    jae .call_stack_overflow
+    lea rax, [rip + call_stack]
+    mov [rax + rdx * 8], rsi
+    inc rdx
+    mov [rcx], rdx
+
+    cmp r8, 524280
+    jae .fastcall_direct
+    test r9, r9
+    jnz .fastcall_offset
+    lea rax, [rip + labels_array]
+    mov rsi, [rax + r8 * 8]
+    test rsi, rsi
+    jnz .fastcall_done
+.fastcall_offset:
+    cmp r8, 8192
+    jae .fastcall_direct
+    mov r11, [rbx + r8 * 8]
+    test r11, r11
+    jnz 1f
+    mov r11, [rdi + r8 * 8]
+1:
+    test r11, r11
+    jz .fastcall_direct
+    lea rsi, [r11 + r9]
+    NEXT
+.fastcall_direct:
+    mov rsi, r8
+.fastcall_done:
+    NEXT
+
 # --- Opcode Handlers ---
+.align 64
 op_load_const:
     movsd xmm0, [rsi]
     mov rcx, [rsi+8]
@@ -453,6 +581,7 @@ op_load_const:
 
 # op_load_raw: stores a raw 64-bit value (pointer/integer) without float conversion
 # Bytecode: [handler_ptr][raw_64bit_value][dest_reg]
+.align 64
 op_load_raw:
     mov rax, [rsi]
     mov rcx, [rsi+8]
@@ -460,6 +589,7 @@ op_load_raw:
     mov [rdi + rcx * 8], rax
     mov [rbx + rcx * 8], rax
     NEXT
+.align 64
 op_add:
     mov rcx, [rsi]
     mov r8,  [rsi+8]
@@ -482,6 +612,7 @@ op_add:
     movsd [rdi + rcx * 8], xmm0
     NEXT
 
+.align 64
 op_lt:
     mov rcx, [rsi]
     mov r8,  [rsi+8]
@@ -498,6 +629,7 @@ op_lt:
     mov [rdi + rcx * 8], rax
     NEXT
 
+.align 64
 op_jmp:
     mov rcx, [rsi]
     cmp rcx, 524280
@@ -509,6 +641,7 @@ op_jmp:
     add rsi, 8
     NEXT
 
+.align 64
 op_jmp_f:
     mov rcx, [rsi]
     mov r8,  [rsi+8]
@@ -4408,6 +4541,7 @@ find_dict_key_node:
 
 
 
+.align 64
 op_jmp_f_o:
     mov rcx, [rsi]
     mov r8,  [rsi+8]
@@ -4462,6 +4596,7 @@ op_load_raw_ptr:
     mov [rdi + r9 * 8], r8
     NEXT
 
+.align 64
 op_call_o:
     mov rcx, [rsi]
     mov r8, [rsi+8]
@@ -4511,6 +4646,7 @@ op_call_o:
     mov rsi, [r12 + r11 * 8]
     NEXT
 
+.align 64
 op_call:
     mov rcx, [rsi]       # read label index
     add rsi, 8
@@ -4563,6 +4699,7 @@ op_gte:
     mov [rdi + rcx * 8], rax
     NEXT
 
+.align 64
 op_ret:
     mov r8, [rip + current_fiber_id]
     test r8, r8
@@ -5064,6 +5201,7 @@ op_set_len:
 2:
     NEXT
 
+.align 64
 op_array_push:
     mov rcx, [rsi]       # dest
     mov r8,  [rsi+8]     # arr_reg
@@ -5131,18 +5269,33 @@ op_array_push:
     cvtsi2sd xmm1, rdx
     movsd [rax - 16], xmm1
 
-    # Copy old elements
+    # SIMD-accelerated copy of old elements
     test rdx, rdx
     jle .ap_copy_done
     xor r10, r10
-.ap_copy_loop:
+
+.ap_copy_unroll_check:
+    mov r14, rdx
+    sub r14, r10
+    cmp r14, 4
+    jb .ap_copy_scalar
+
+    movups xmm0, [r11 + r10 * 8]
+    movups xmm1, [r11 + r10 * 8 + 16]
+    movups [rax + r10 * 8], xmm0
+    movups [rax + r10 * 8 + 16], xmm1
+    add r10, 4
+    jmp .ap_copy_unroll_check
+
+.ap_copy_scalar:
+    cmp r10, rdx
+    jge .ap_copy_done
     mov r14, [r11 + r10 * 8]
     mov [rax + r10 * 8], r14
     inc r10
-    cmp r10, rdx
-    jl .ap_copy_loop
-.ap_copy_done:
+    jmp .ap_copy_scalar
 
+.ap_copy_done:
     # Update array pointer in VM registers
     mov [rbx + r8 * 8], rax
     mov [rdi + r8 * 8], rax
@@ -9947,6 +10100,7 @@ op_throw_defer_resume:
     mov rsi, [rip + throw_target_catch_rsi]
     NEXT
 
+.align 64
 op_sub:
     mov rcx, [rsi]; mov r8, [rsi+8]; mov r9, [rsi+16]; add rsi, 24
     movsd xmm0, [rdi + r8 * 8]
@@ -9954,6 +10108,7 @@ op_sub:
     movsd [rdi + rcx * 8], xmm0
     NEXT
 
+.align 64
 op_mul:
     mov rcx, [rsi]; mov r8, [rsi+8]; mov r9, [rsi+16]; add rsi, 24
     movsd xmm0, [rdi + r8 * 8]
@@ -9961,6 +10116,7 @@ op_mul:
     movsd [rdi + rcx * 8], xmm0
     NEXT
 
+.align 64
 op_div:
     mov rcx, [rsi]; mov r8, [rsi+8]; mov r9, [rsi+16]; add rsi, 24
     movsd xmm1, [rdi + r9 * 8]
@@ -10198,17 +10354,12 @@ op_store_f:
 .store_f_null:
     NEXT
 
+.align 64
 op_index_get:
     mov r12, [rsi]       # dest
     mov r8,  [rsi+8]     # ptr_reg
     mov r9,  [rsi+16]    # key_reg
     add rsi, 24
-    cmp r12, 8192
-    jae .dict_get_null
-    cmp r8, 8192
-    jae .dict_get_null
-    cmp r9, 8192
-    jae .dict_get_null
 
     mov rax, [rbx + r8 * 8]
     test rax, rax
@@ -10220,25 +10371,14 @@ op_index_get:
     cmp rax, 0x10000
     jb .dict_get_null
 
-    cmp qword ptr [rax - 32], 1   # type tag == 1 (Dictionary)?
-    je 3f
-    mov r10, 0x44494354          # "DICT"?
-    cmp [rax - 32], r10
-    jne .idx_get_array
-3:
+    mov r10, [rax - 32]
+    cmp r10, 1
+    je .idx_get_dict
+    mov r11, 0x44494354
+    cmp r10, r11
+    je .idx_get_dict
 
-    # DICTIONARY GET:
-    mov r10, rax
-    mov r11, [rbx + r9 * 8]
-    test r11, r11
-    jnz 2f
-    mov r11, [rdi + r9 * 8]
-2:
-    test r11, r11
-    jz .dict_get_not_found
-    jmp .dict_get_loop_start
-
-.idx_get_array:
+    # Fast Array Index Get
     movsd xmm0, [rdi + r9 * 8]
     cvttsd2si rdx, xmm0
     test rdx, rdx
@@ -10250,23 +10390,30 @@ op_index_get:
     mov [rbx + r12 * 8], rax
     NEXT
 
+.idx_get_dict:
+    # DICTIONARY GET:
+    mov r10, rax
+    mov r11, [rbx + r9 * 8]
+    test r11, r11
+    jnz 2f
+    mov r11, [rdi + r9 * 8]
+2:
+    test r11, r11
+    jz .dict_get_not_found
+    jmp .dict_get_loop_start
+
 .idx_get_oob:
     xor eax, eax
     mov [rdi + r12 * 8], rax
     mov [rbx + r12 * 8], rax
     NEXT
 
+.align 64
 op_index_set:
     mov r8,  [rsi]       # ptr_reg
     mov r9,  [rsi+8]     # key_reg
     mov r10, [rsi+16]    # val_reg
     add rsi, 24
-    cmp r8, 8192
-    jae .idx_set_done
-    cmp r9, 8192
-    jae .idx_set_done
-    cmp r10, 8192
-    jae .idx_set_done
 
     mov rax, [rbx + r8 * 8]
     test rax, rax
@@ -10278,13 +10425,36 @@ op_index_set:
     cmp rax, 0x10000
     jb .idx_set_done
 
-    cmp qword ptr [rax - 32], 1   # type tag == 1 (Dictionary)?
-    je 4f
-    mov rcx, 0x44494354          # "DICT"?
-    cmp [rax - 32], rcx
-    jne .idx_set_array
-4:
+    mov rcx, [rax - 32]
+    cmp rcx, 1
+    je .idx_set_dict
+    mov r11, 0x44494354
+    cmp rcx, r11
+    je .idx_set_dict
 
+    # Fast Array Index Set
+    movsd xmm0, [rdi + r9 * 8]
+    cvttsd2si rdx, xmm0
+    test rdx, rdx
+    js .idx_set_done
+    cmp rdx, [rax - 8]
+    ja .idx_set_done
+    mov r11, [rbx + r10 * 8]
+    test r11, r11
+    jnz 4f
+    mov r11, [rdi + r10 * 8]
+4:
+    mov [rax + rdx * 8], r11
+    cmp rdx, [rax - 8]
+    jl .idx_set_done
+    lea r14, [rdx + 1]
+    mov [rax - 8], r14
+    cvtsi2sd xmm1, r14
+    movsd [rax - 16], xmm1
+.idx_set_done:
+    NEXT
+
+.idx_set_dict:
     # DICTIONARY SET:
     mov r14, [rbx + r10 * 8]
     test r14, r14
@@ -10298,31 +10468,6 @@ op_index_set:
 3:
     mov r10, rax
     jmp .dict_set_loop_start
-
-.idx_set_array:
-    movsd xmm0, [rdi + r9 * 8]
-    cvttsd2si rdx, xmm0
-    test rdx, rdx
-    js .idx_set_done
-    mov rcx, [rax - 24]          # array capacity in bytes
-    lea r13, [rdx * 8 + 8]
-    cmp r13, rcx
-    ja .idx_set_done             # prevent out-of-bounds write past buffer
-    mov r11, [rbx + r10 * 8]
-    test r11, r11
-    jnz 4f
-    mov r11, [rdi + r10 * 8]
-4:
-    mov [rax + rdx * 8], r11
-    mov r14, [rax - 8]
-    inc rdx
-    cmp rdx, r14
-    jle .idx_set_done
-    mov [rax - 8], rdx
-    cvtsi2sd xmm1, rdx
-    movsd [rax - 16], xmm1
-.idx_set_done:
-    NEXT
 
 op_gpu_dispatch:
     mov r12, [rsi]       # dest
@@ -13347,8 +13492,78 @@ fgets:
     lea rdx, [rip + str_FIBER_AWAIT]
     call strcmp
     test eax, eax
-    jne .print_bad_token
+    jne .check_FUSED_ADD_MEM
     lea rax, [rip + op_fiber_await]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_FUSED_ADD_MEM:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_FUSED_ADD_MEM]
+    call strcmp
+    test eax, eax
+    jne .check_FUSED_MUL_MEM
+    lea rax, [rip + op_fused_add_mem]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_FUSED_MUL_MEM:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_FUSED_MUL_MEM]
+    call strcmp
+    test eax, eax
+    jne .check_FUSED_JMP_LT
+    lea rax, [rip + op_fused_mul_mem]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_FUSED_JMP_LT:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_FUSED_JMP_LT]
+    call strcmp
+    test eax, eax
+    jne .check_FUSED_INC_STORE
+    lea rax, [rip + op_fused_jmp_lt]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_FUSED_INC_STORE:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_FUSED_INC_STORE]
+    call strcmp
+    test eax, eax
+    jne .check_FUSED_FASTCALL_2
+    lea rax, [rip + op_fused_inc_store]
+    mov [r13], rax
+    add r13, 8
+    call .read_reg_arg
+    call .read_reg_arg
+    call .read_reg_arg
+    jmp .read_loop
+
+.check_FUSED_FASTCALL_2:
+    lea rcx, [rip + token_buf]
+    lea rdx, [rip + str_FUSED_FASTCALL_2]
+    call strcmp
+    test eax, eax
+    jne .print_bad_token
+    lea rax, [rip + op_fused_fastcall_2]
     mov [r13], rax
     add r13, 8
     call .read_reg_arg
@@ -14667,8 +14882,53 @@ fgets:
     lea rdx, [rip + str_ASYNC_SEND]
     call strcmp
     test eax, eax
-    jne .check_GET_OP_NOT_FOUND
+    jne .check_GET_OP_FUSED_ADD_MEM
     lea r15, [rip + op_async_send]
+    jmp .get_op_found
+
+.check_GET_OP_FUSED_ADD_MEM:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_FUSED_ADD_MEM]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_FUSED_MUL_MEM
+    lea r15, [rip + op_fused_add_mem]
+    jmp .get_op_found
+
+.check_GET_OP_FUSED_MUL_MEM:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_FUSED_MUL_MEM]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_FUSED_JMP_LT
+    lea r15, [rip + op_fused_mul_mem]
+    jmp .get_op_found
+
+.check_GET_OP_FUSED_JMP_LT:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_FUSED_JMP_LT]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_FUSED_INC_STORE
+    lea r15, [rip + op_fused_jmp_lt]
+    jmp .get_op_found
+
+.check_GET_OP_FUSED_INC_STORE:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_FUSED_INC_STORE]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_FUSED_FASTCALL_2
+    lea r15, [rip + op_fused_inc_store]
+    jmp .get_op_found
+
+.check_GET_OP_FUSED_FASTCALL_2:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_FUSED_FASTCALL_2]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_NOT_FOUND
+    lea r15, [rip + op_fused_fastcall_2]
     jmp .get_op_found
 
 .check_GET_OP_NOT_FOUND:
