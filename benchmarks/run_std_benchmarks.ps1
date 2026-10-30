@@ -25,7 +25,8 @@ $benchmarks = @(
     @{ Name = "stdlsp";   File = "benchmarks/bench_std_lsp.nx" },
     @{ Name = "stdpkg";   File = "benchmarks/bench_std_pkg.nx" },
     @{ Name = "stdprofile";File = "benchmarks/bench_std_profile.nx" },
-    @{ Name = "stddl";    File = "benchmarks/bench_std_dl.nx" }
+    @{ Name = "stddl";    File = "benchmarks/bench_std_dl.nx" },
+    @{ Name = "stdllm";   File = "benchmarks/bench_std_llm.nx" }
 )
 
 $passed = 0

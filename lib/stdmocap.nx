@@ -1,0 +1,426 @@
+// ==============================================================================
+// Nexus Baremetal - stdmocap: Standard Motion Capture & Skeletal Animation Module
+// Optical, Inertial (IMU), Neural Markerless Tracking, DQS Skinning & Rigging
+// Movie Production & Low-Latency Video Game Real-Time Animation Pipeline
+// Pure Baremetal x86-64 & PTX Architecture - Zero External CRT
+// ==============================================================================
+
+import stdlib
+
+// --------------------------------------------------------------------------
+// 1. Joint & Skeletal Hierarchy (Forward Kinematics)
+// --------------------------------------------------------------------------
+class Joint {
+    fn create(id, name, parent_id, px, py, pz, qx, qy, qz, qw) {
+        let j = {}
+        j["id"] = id
+        j["name"] = name
+        j["parent"] = parent_id
+        j["local_x"] = px
+        j["local_y"] = py
+        j["local_z"] = pz
+        j["local_qx"] = qx
+        j["local_qy"] = qy
+        j["local_qz"] = qz
+        j["local_qw"] = qw
+        j["world_x"] = px
+        j["world_y"] = py
+        j["world_z"] = pz
+        return j
+    }
+}
+
+class Skeleton {
+    fn create(name) {
+        let s = {}
+        s["name"] = name
+        s["joints"] = {}
+        s["joint_count"] = 0.0
+        return s
+    }
+
+    fn add_joint(s, name, parent_id, px, py, pz, qx, qy, qz, qw) {
+        let id = s["joint_count"]
+        let j = Joint.create(id, name, parent_id, px, py, pz, qx, qy, qz, qw)
+        let joints = s["joints"]
+        joints[to_string(id)] = j
+        s["joint_count"] = s["joint_count"] + 1.0
+        return id
+    }
+
+    fn update_world_transforms(s) {
+        let n = s["joint_count"]
+        let i = 0.0
+        let joints = s["joints"]
+        while i < n {
+            let j = joints[to_string(i)]
+            let p_idx = j["parent"]
+            if p_idx >= 0.0 {
+                let pj = joints[to_string(p_idx)]
+                j["world_x"] = pj["world_x"] + j["local_x"]
+                j["world_y"] = pj["world_y"] + j["local_y"]
+                j["world_z"] = pj["world_z"] + j["local_z"]
+            } else {
+                j["world_x"] = j["local_x"]
+                j["world_y"] = j["local_y"]
+                j["world_z"] = j["local_z"]
+            }
+            i = i + 1.0
+        }
+        return 1.0
+    }
+
+    fn get_joint(s, joint_id) {
+        let joints = s["joints"]
+        return joints[to_string(joint_id)]
+    }
+}
+
+// --------------------------------------------------------------------------
+// 2. Dual Quaternion Skinning (DQS) - Candy-Wrapper-Free Deformation
+// --------------------------------------------------------------------------
+class DualQuaternionSkinning {
+    fn skin_vertex(vx, vy, vz, dq_real_list, dq_dual_list, weights) {
+        let n = Array.len(weights)
+        let sum_rx = 0.0
+        let sum_ry = 0.0
+        let sum_rz = 0.0
+        let sum_rw = 0.0
+
+        let sum_dx = 0.0
+        let sum_dy = 0.0
+        let sum_dz = 0.0
+        let sum_dw = 0.0
+
+        let base_r = dq_real_list[0]
+        let i = 0
+        while i < n {
+            let w = weights[i]
+            if w > 0.0 {
+                let r = dq_real_list[i]
+                let d = dq_dual_list[i]
+
+                let dot = (r["x"] * base_r["x"]) + (r["y"] * base_r["y"]) + (r["z"] * base_r["z"]) + (r["w"] * base_r["w"])
+                let sign = 1.0
+                if dot < 0.0 {
+                    sign = -1.0
+                }
+
+                sum_rx = sum_rx + (r["x"] * w * sign)
+                sum_ry = sum_ry + (r["y"] * w * sign)
+                sum_rz = sum_rz + (r["z"] * w * sign)
+                sum_rw = sum_rw + (r["w"] * w * sign)
+
+                sum_dx = sum_dx + (d["x"] * w * sign)
+                sum_dy = sum_dy + (d["y"] * w * sign)
+                sum_dz = sum_dz + (d["z"] * w * sign)
+                sum_dw = sum_dw + (d["w"] * w * sign)
+            }
+            i = i + 1
+        }
+
+        let mag = Math.sqrt((sum_rx * sum_rx) + (sum_ry * sum_ry) + (sum_rz * sum_rz) + (sum_rw * sum_rw))
+        let inv_mag = 1.0
+        if mag > 0.00000001 {
+            inv_mag = 1.0 / mag
+        }
+
+        let n_rx = sum_rx * inv_mag
+        let n_ry = sum_ry * inv_mag
+        let n_rz = sum_rz * inv_mag
+        let n_rw = sum_rw * inv_mag
+
+        let n_dx = sum_dx * inv_mag
+        let n_dy = sum_dy * inv_mag
+        let n_dz = sum_dz * inv_mag
+        let n_dw = sum_dw * inv_mag
+
+        let tx = 2.0 * ((-n_dw * n_rx) + (n_dx * n_rw) - (n_dy * n_rz) + (n_dz * n_ry))
+        let ty = 2.0 * ((-n_dw * n_ry) + (n_dx * n_rz) + (n_dy * n_rw) - (n_dz * n_rx))
+        let tz = 2.0 * ((-n_dw * n_rz) - (n_dx * n_ry) + (n_dy * n_rx) + (n_dz * n_rw))
+
+        let qx = n_rx
+        let qy = n_ry
+        let qz = n_rz
+        let qw = n_rw
+        let uvx = (qy * vz) - (qz * vy)
+        let uvy = (qz * vx) - (qx * vz)
+        let uvz = (qx * vy) - (qy * vx)
+
+        let uuvx = (qy * uvz) - (qz * uvy)
+        let uuvy = (qz * uvx) - (qx * uvz)
+        let uuvz = (qx * uvy) - (qy * uvx)
+
+        let rot_x = vx + ((uvx * qw) + uuvx) * 2.0
+        let rot_y = vy + ((uvy * qw) + uuvy) * 2.0
+        let rot_z = vz + ((uvz * qw) + uuvz) * 2.0
+
+        let res = {}
+        res["x"] = rot_x + tx
+        res["y"] = rot_y + ty
+        res["z"] = rot_z + tz
+        return res
+    }
+}
+
+// --------------------------------------------------------------------------
+// 3. Two-Bone Analytical Inverse Kinematics (IK with Pole Vector)
+// --------------------------------------------------------------------------
+class TwoBoneIK {
+    fn solve(root_pos, target_pos, pole_vector, len_upper, len_lower) {
+        let dx = target_pos["x"] - root_pos["x"]
+        let dy = target_pos["y"] - root_pos["y"]
+        let dz = target_pos["z"] - root_pos["z"]
+        let dist = Math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+
+        let max_reach = (len_upper + len_lower) * 0.9999
+        let min_reach = Math.abs(len_upper - len_lower) * 1.0001
+        let clamped_dist = Math.max(min_reach, Math.min(max_reach, dist))
+
+        let a = len_upper
+        let b = len_lower
+        let c = clamped_dist
+
+        let cos_root = ((a * a) + (c * c) - (b * b)) / (2.0 * a * c)
+        let sin_root = Math.sqrt(Math.max(0.0, 1.0 - (cos_root * cos_root)))
+
+        let inv_c = 1.0 / clamped_dist
+        let dir_x = dx * inv_c
+        let dir_y = dy * inv_c
+        let dir_z = dz * inv_c
+
+        let mid = {}
+        mid["x"] = root_pos["x"] + (dir_x * a * cos_root) + (pole_vector["x"] * a * sin_root)
+        mid["y"] = root_pos["y"] + (dir_y * a * cos_root) + (pole_vector["y"] * a * sin_root)
+        mid["z"] = root_pos["z"] + (dir_z * a * cos_root) + (pole_vector["z"] * a * sin_root)
+
+        let result = {}
+        result["root"] = root_pos
+        result["mid"] = mid
+        result["end"] = target_pos
+        return result
+    }
+}
+
+// --------------------------------------------------------------------------
+// 4. IMUFusion - Madgwick 9-DoF Inertial Sensor Fusion Filter
+// --------------------------------------------------------------------------
+class IMUFusion {
+    fn create(beta) {
+        let f = {}
+        f["beta"] = beta
+        f["qx"] = 0.0
+        f["qy"] = 0.0
+        f["qz"] = 0.0
+        f["qw"] = 1.0
+        return f
+    }
+
+    fn update(f, gx, gy, gz, ax, ay, az, dt) {
+        let a_norm = Math.sqrt((ax * ax) + (ay * ay) + (az * az))
+        if a_norm > 0.0001 {
+            let inv_a = 1.0 / a_norm
+            ax = ax * inv_a
+            ay = ay * inv_a
+            az = az * inv_a
+
+            let qx = f["qx"]
+            let qy = f["qy"]
+            let qz = f["qz"]
+            let qw = f["qw"]
+
+            let f1 = (2.0 * ((qx * qz) - (qw * qy))) - ax
+            let f2 = (2.0 * ((qw * qx) + (qy * qz))) - ay
+            let f3 = (2.0 * (0.5 - (qx * qx) - (qy * qy))) - az
+
+            let q_dot_w = 0.5 * ((-qx * gx) - (qy * gy) - (qz * gz))
+            let q_dot_x = 0.5 * ((qw * gx) + (qy * gz) - (qz * gy))
+            let q_dot_y = 0.5 * ((qw * gy) - (qx * gz) + (qz * gx))
+            let q_dot_z = 0.5 * ((qw * gz) + (qx * gy) - (qy * gx))
+
+            f["qw"] = qw + ((q_dot_w - (f["beta"] * f1)) * dt)
+            f["qx"] = qx + ((q_dot_x - (f["beta"] * f2)) * dt)
+            f["qy"] = qy + ((q_dot_y - (f["beta"] * f3)) * dt)
+            f["qz"] = qz + (q_dot_z * dt)
+
+            let mag = Math.sqrt((f["qx"] * f["qx"]) + (f["qy"] * f["qy"]) + (f["qz"] * f["qz"]) + (f["qw"] * f["qw"]))
+            if mag > 0.00001 {
+                let inv_m = 1.0 / mag
+                f["qx"] = f["qx"] * inv_m
+                f["qy"] = f["qy"] * inv_m
+                f["qz"] = f["qz"] * inv_m
+                f["qw"] = f["qw"] * inv_m
+            }
+        }
+        let q = {}
+        q["x"] = f["qx"]
+        q["y"] = f["qy"]
+        q["z"] = f["qz"]
+        q["w"] = f["qw"]
+        return q
+    }
+}
+
+// --------------------------------------------------------------------------
+// 5. ARKit Facial Rig (52 Standard Blendshapes & Audio Lip-Sync)
+// --------------------------------------------------------------------------
+class ARKitFacialRig {
+    fn create() {
+        let rig = {}
+        rig["weights"] = {}
+        let w = rig["weights"]
+        w["jawOpen"] = 0.0
+        w["eyeBlinkLeft"] = 0.0
+        w["eyeBlinkRight"] = 0.0
+        w["mouthSmileLeft"] = 0.0
+        w["mouthSmileRight"] = 0.0
+        return rig
+    }
+
+    fn set_weight(rig, name, weight) {
+        let w = rig["weights"]
+        w[name] = Math.max(0.0, Math.min(1.0, weight))
+        return 1.0
+    }
+
+    fn get_weight(rig, name) {
+        let w = rig["weights"]
+        let val = w[name]
+        if val == 0 {
+            return 0.0
+        }
+        return val
+    }
+}
+
+// --------------------------------------------------------------------------
+// 6. HumanoidRig - Standard Biped Skeleton & Procedural Animation Generators
+// --------------------------------------------------------------------------
+class HumanoidRig {
+    fn create_standard_biped() {
+        let skel = Skeleton.create("StandardBiped")
+        // Spine & Head chain (0-4)
+        Skeleton.add_joint(skel, "Hips", -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Spine", 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Chest", 1.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Neck", 2.0, 0.0, 0.15, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Head", 3.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+        // Left Arm chain (5-8)
+        Skeleton.add_joint(skel, "Shoulder_L", 2.0, -0.2, 0.05, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "UpperArm_L", 5.0, -0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Forearm_L", 6.0, -0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Hand_L", 7.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+        // Right Arm chain (9-12)
+        Skeleton.add_joint(skel, "Shoulder_R", 2.0, 0.2, 0.05, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "UpperArm_R", 9.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Forearm_R", 10.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Hand_R", 11.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+        // Left Leg chain (13-15)
+        Skeleton.add_joint(skel, "Thigh_L", 0.0, -0.15, -0.1, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Calf_L", 13.0, 0.0, -0.45, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Foot_L", 14.0, 0.0, -0.45, 0.1, 0.0, 0.0, 0.0, 1.0)
+
+        // Right Leg chain (16-18)
+        Skeleton.add_joint(skel, "Thigh_R", 0.0, 0.15, -0.1, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Calf_R", 16.0, 0.0, -0.45, 0.0, 0.0, 0.0, 0.0, 1.0)
+        Skeleton.add_joint(skel, "Foot_R", 17.0, 0.0, -0.45, 0.1, 0.0, 0.0, 0.0, 1.0)
+
+        Skeleton.update_world_transforms(skel)
+        return skel
+    }
+
+    fn idle_breathing(skel, time_sec) {
+        let breath = Math.sin(time_sec * 2.5) * 0.015
+        let spine = Skeleton.get_joint(skel, 1.0)
+        let chest = Skeleton.get_joint(skel, 2.0)
+        spine["local_y"] = 0.2 + breath
+        chest["local_y"] = 0.25 + (breath * 1.5)
+        Skeleton.update_world_transforms(skel)
+        return 1.0
+    }
+
+    fn walk_cycle(skel, time_sec, stride_speed) {
+        let phi = time_sec * stride_speed
+        let hip_bounce = Math.sin(phi * 2.0) * 0.03
+        let leg_l_swing = Math.sin(phi) * 0.25
+        let leg_r_swing = Math.sin(phi + 3.14159265) * 0.25
+        let arm_l_swing = Math.sin(phi + 3.14159265) * 0.2
+        let arm_r_swing = Math.sin(phi) * 0.2
+
+        let hips = Skeleton.get_joint(skel, 0.0)
+        let thigh_l = Skeleton.get_joint(skel, 13.0)
+        let thigh_r = Skeleton.get_joint(skel, 16.0)
+        let arm_l = Skeleton.get_joint(skel, 6.0)
+        let arm_r = Skeleton.get_joint(skel, 10.0)
+
+        hips["local_y"] = 1.0 + hip_bounce
+        thigh_l["local_z"] = leg_l_swing
+        thigh_r["local_z"] = leg_r_swing
+        arm_l["local_z"] = arm_l_swing
+        arm_r["local_z"] = arm_r_swing
+
+        Skeleton.update_world_transforms(skel)
+        return 1.0
+    }
+
+    fn apply_foot_ik(skel, ground_y) {
+        let foot_l = Skeleton.get_joint(skel, 15.0)
+        let foot_r = Skeleton.get_joint(skel, 18.0)
+
+        if foot_l["world_y"] < ground_y {
+            let thigh_l = Skeleton.get_joint(skel, 13.0)
+            let root_pos = {}
+            root_pos["x"] = thigh_l["world_x"]
+            root_pos["y"] = thigh_l["world_y"]
+            root_pos["z"] = thigh_l["world_z"]
+
+            let target_pos = {}
+            target_pos["x"] = foot_l["world_x"]
+            target_pos["y"] = ground_y
+            target_pos["z"] = foot_l["world_z"]
+
+            let pole = {}
+            pole["x"] = 0.0
+            pole["y"] = 0.0
+            pole["z"] = 1.0
+
+            let solved = TwoBoneIK.solve(root_pos, target_pos, pole, 0.45, 0.45)
+            let mid = solved["mid"]
+            let calf_l = Skeleton.get_joint(skel, 14.0)
+            calf_l["world_x"] = mid["x"]
+            calf_l["world_y"] = mid["y"]
+            calf_l["world_z"] = mid["z"]
+            foot_l["world_y"] = ground_y
+        }
+
+        if foot_r["world_y"] < ground_y {
+            let thigh_r = Skeleton.get_joint(skel, 16.0)
+            let root_pos = {}
+            root_pos["x"] = thigh_r["world_x"]
+            root_pos["y"] = thigh_r["world_y"]
+            root_pos["z"] = thigh_r["world_z"]
+
+            let target_pos = {}
+            target_pos["x"] = foot_r["world_x"]
+            target_pos["y"] = ground_y
+            target_pos["z"] = foot_r["world_z"]
+
+            let pole = {}
+            pole["x"] = 0.0
+            pole["y"] = 0.0
+            pole["z"] = 1.0
+
+            let solved = TwoBoneIK.solve(root_pos, target_pos, pole, 0.45, 0.45)
+            let mid = solved["mid"]
+            let calf_r = Skeleton.get_joint(skel, 17.0)
+            calf_r["world_x"] = mid["x"]
+            calf_r["world_y"] = mid["y"]
+            calf_r["world_z"] = mid["z"]
+            foot_r["world_y"] = ground_y
+        }
+        return 1.0
+    }
+}

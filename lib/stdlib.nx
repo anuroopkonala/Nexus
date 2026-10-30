@@ -213,11 +213,13 @@ class Math {
     }
 
     fn min(a, b) {
-        return min(a, b)
+        if a < b { return a }
+        return b
     }
 
     fn max(a, b) {
-        return max(a, b)
+        if a > b { return a }
+        return b
     }
 }
 

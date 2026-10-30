@@ -4027,8 +4027,8 @@ asm_gpu_dispatch:
     mov eax, r10d
     imul eax, r11d
     mov [rbp - 68], eax
-    shl eax, 2
-    mov [rbp - 76], eax
+    shl rax, 2
+    mov [rbp - 76], rax
 
     lea rdi, [rbp - 48]
     mov rcx, rdi
@@ -4113,8 +4113,8 @@ asm_gpu_dispatch:
 
     mov eax, r10d
     imul eax, r11d
-    shl eax, 2
-    mov [rbp - 76], eax
+    shl rax, 2
+    mov [rbp - 76], rax
 
     mov qword ptr [rbp - 68], 0         # d_gamma = 0
     mov qword ptr [rbp - 80], 0         # d_beta = 0
@@ -4245,8 +4245,8 @@ asm_gpu_dispatch:
 
     mov eax, r10d
     imul eax, r11d
-    shl eax, 2
-    mov [rbp - 76], eax
+    shl rax, 2
+    mov [rbp - 76], rax
 
     mov qword ptr [rbp - 68], 0         # d_gamma = 0
     mov dword ptr [rbp - 84], 0x3727C5AC # eps default = 1e-5
@@ -4477,8 +4477,8 @@ asm_gpu_dispatch:
 2:
     mov eax, [rbp - 56]
     imul eax, [rbp - 60]
-    shl eax, 2
-    mov [rbp - 76], eax
+    shl rax, 2
+    mov [rbp - 76], rax
 
     lea rdi, [rbp - 48]
     mov rcx, rdi
@@ -4588,8 +4588,8 @@ asm_gpu_dispatch:
 2:
     mov eax, [rbp - 56]
     imul eax, [rbp - 60]
-    shl eax, 2
-    mov [rbp - 76], eax
+    shl rax, 2
+    mov [rbp - 76], rax
 
     lea rdi, [rbp - 48]
     mov rcx, rdi
@@ -4719,8 +4719,8 @@ asm_gpu_dispatch:
 4:
     mov eax, [rbp - 64]
     imul eax, [rbp - 68]
-    shl eax, 2
-    mov [rbp - 76], eax
+    shl rax, 2
+    mov [rbp - 76], rax
 
     lea rdi, [rbp - 48]
     mov rcx, rdi
@@ -7791,7 +7791,7 @@ asm_gpu_dispatch:
     # Returns backend id (1.0 = CUDA, 2.0 = ROCm, 3.0 = AVX2) or backend name string
     # --------------------------------------------------------------------------
     cmp r14, 74
-    jne .check_op_fallback
+    jne .check_op_75
     test r15, r15
     jz .backend_id_only
     mov rcx, r15
@@ -7831,6 +7831,192 @@ asm_gpu_dispatch:
     cvtsi2sd xmm0, rax
     mov r13, [rbp - 32]
     mov rdx, [rbp - 8]
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+    # --------------------------------------------------------------------------
+    # OP 75: GPU_FUSED_RMSNORM_RESIDUAL (args = [x, residual, gamma, eps])
+    # --------------------------------------------------------------------------
+.check_op_75:
+    cmp r14, 75
+    jne .check_op_fallback
+    test r15, r15
+    jz .fused_rms_fail
+    mov rcx, r15
+    call asm_gpu_is_nexus_array
+    jne .fused_rms_fail
+
+    # Look up X
+    movsd xmm0, [r15]
+    cvttsd2si rcx, xmm0
+    call asm_gpu_lookup_handle
+    test rax, rax
+    jz .fused_rms_fail
+    mov rsi, rax            # rsi = X handle
+
+    # Dimension rows = X->dim0, cols = X->dim1
+    mov r10d, [rsi + 40]    # rows N
+    mov r11d, [rsi + 44]    # cols D
+    test r10d, r10d
+    jle .fused_rms_fail
+    test r11d, r11d
+    jle .fused_rms_fail
+
+    mov [rbp - 56], r10d    # N
+    mov [rbp - 60], r11d    # D
+    mov eax, r10d
+    imul eax, r11d
+    mov [rbp - 68], rax     # total elements
+    shl rax, 2
+    mov [rbp - 76], rax     # total bytes
+
+    # Look up optional Residual (arg 1)
+    mov qword ptr [rbp - 112], 0    # rbx = residual handle (0 if none)
+    movsd xmm0, [r15 - 16]          # array len
+    cvttsd2si rcx, xmm0
+    cmp rcx, 1
+    jle .fused_rms_no_res
+    movsd xmm0, [r15 + 8]
+    cvttsd2si rcx, xmm0
+    test rcx, rcx
+    jz .fused_rms_no_res
+    call asm_gpu_lookup_handle
+    mov [rbp - 112], rax
+.fused_rms_no_res:
+
+    # Look up optional Gamma (arg 2)
+    mov qword ptr [rbp - 120], 0    # gamma handle (0 if none)
+    movsd xmm0, [r15 - 16]
+    cvttsd2si rcx, xmm0
+    cmp rcx, 2
+    jle .fused_rms_no_gamma
+    movsd xmm0, [r15 + 16]
+    cvttsd2si rcx, xmm0
+    test rcx, rcx
+    jz .fused_rms_no_gamma
+    call asm_gpu_lookup_handle
+    mov [rbp - 120], rax
+.fused_rms_no_gamma:
+
+    # Read optional eps (arg 3)
+    mov dword ptr [rbp - 84], 0x3727C5AC  # 1e-5 default
+    movsd xmm0, [r15 - 16]
+    cvttsd2si rcx, xmm0
+    cmp rcx, 3
+    jle .fused_rms_eps_done
+    movsd xmm0, [r15 + 24]
+    cvtsd2ss xmm1, xmm0
+    movss [rbp - 84], xmm1
+.fused_rms_eps_done:
+
+    # Allocate output buffer (malloc for host execution)
+    mov rcx, [rbp - 76]     # size_bytes
+    call malloc
+    test rax, rax
+    jz .fused_rms_fail
+    mov [rbp - 88], rax     # out_buf = rax
+
+    # Pointers
+    mov rsi, [rsi + 16]     # X ptr (host)
+    mov rbx, [rbp - 112]    # Res handle
+    test rbx, rbx
+    jz 1f
+    mov rbx, [rbx + 16]     # Res ptr
+1:
+    mov r12, [rbp - 120]    # Gamma handle
+    test r12, r12
+    jz 2f
+    mov r12, [r12 + 16]     # Gamma ptr
+2:
+    mov rdi, [rbp - 88]     # Out ptr
+    mov r10d, [rbp - 56]    # N rows
+    mov r11d, [rbp - 60]    # D cols
+
+    # Loop over each row i in 0..N-1
+    xor r8d, r8d            # i = 0
+.fused_row_lp:
+    cmp r8d, r10d
+    jge .fused_rows_done
+
+    # Row offset in elements = i * D
+    mov eax, r8d
+    imul eax, r11d
+    mov r14d, eax           # r14d = row_elem_offset
+
+    # Compute sum of squares: S = sum((x_ij + res_ij)^2)
+    xorps xmm0, xmm0        # sum_sq = 0.0
+    xor r9d, r9d            # j = 0
+.fused_sq_lp:
+    cmp r9d, r11d
+    jge .fused_sq_done
+    mov eax, r14d
+    add eax, r9d
+    movss xmm1, [rsi + rax * 4]
+    test rbx, rbx
+    jz 3f
+    addss xmm1, [rbx + rax * 4]
+3:
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    inc r9d
+    jmp .fused_sq_lp
+.fused_sq_done:
+
+    # mean_sq = sum_sq / D
+    cvtsi2ss xmm2, r11d
+    divss xmm0, xmm2
+    # mean_sq + eps
+    addss xmm0, [rbp - 84]
+    sqrtss xmm0, xmm0
+    mov eax, 0x3F800000     # 1.0f
+    movd xmm3, eax
+    divss xmm3, xmm0        # xmm3 = 1.0 / rms
+
+    # Normalization & scale loop for row i
+    xor r9d, r9d            # j = 0
+.fused_scale_lp:
+    cmp r9d, r11d
+    jge .fused_row_nxt
+    mov eax, r14d
+    add eax, r9d
+    movss xmm1, [rsi + rax * 4]
+    test rbx, rbx
+    jz 4f
+    addss xmm1, [rbx + rax * 4]
+4:
+    mulss xmm1, xmm3        # val * inv_rms
+    test r12, r12
+    jz 5f
+    mulss xmm1, [r12 + r9 * 4] # * gamma[j]
+5:
+    movss [rdi + rax * 4], xmm1
+    inc r9d
+    jmp .fused_scale_lp
+
+.fused_row_nxt:
+    inc r8d
+    jmp .fused_row_lp
+
+.fused_rows_done:
+    # Register output handle as host tensor (backend = 0)
+    mov rcx, 2              # 2D tensor
+    mov rdx, [rbp - 88]     # ptr
+    mov r8,  [rbp - 76]     # bytes
+    xor r9,  r9             # 0 = host memory
+    mov r10d, [rbp - 56]
+    mov [rsp + 32], r10d
+    mov r11d, [rbp - 60]
+    mov [rsp + 40], r11d
+    call asm_gpu_register_handle
+
+    mov rdx, [rbp - 8]
+    cvtsi2sd xmm0, rax
+    movsd [r13 + rdx * 8], xmm0
+    jmp .dispatch_done
+
+.fused_rms_fail:
+    mov rdx, [rbp - 8]
+    xorpd xmm0, xmm0
     movsd [r13 + rdx * 8], xmm0
     jmp .dispatch_done
 

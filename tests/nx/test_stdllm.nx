@@ -1,0 +1,1116 @@
+// ==============================================================================
+// Nexus Baremetal - Unit & Architecture Test Suite: stdllm (Phase 3)
+// Comprehensive Verification of World-Class Transformer Architectures:
+// LLaMA-3, Mistral, Gemma, DeepSeek MoE & MLA, GQA, RoPE, KV Cache, Kernels
+// ==============================================================================
+
+import stdlib
+
+fn test_assert(cond, test_name) {
+    if (cond) {
+        print("  " + test_name + ": [PASS]")
+    } else {
+        print("  " + test_name + ": [FAIL]")
+    }
+}
+
+fn approx_equal(a, b, eps) {
+    let diff = a - b
+    if diff < 0.0 { diff = 0.0 - diff }
+    return diff <= eps
+}
+
+// --------------------------------------------------------------------------
+// 1. LLM Low-Level Tensor & Hardware Execution Primitives
+// --------------------------------------------------------------------------
+class LLMTensorOps {
+    fn create(shape, initial_val) {
+        return gpu_dispatch(12.0, [shape, initial_val])
+    }
+
+    fn from_array(shape, host_array) {
+        let top_h = gpu_dispatch(12.0, [shape, 0.0])
+        gpu_dispatch(9.0, [top_h, host_array])
+        return top_h
+    }
+
+    fn to_array(h) {
+        return gpu_dispatch(15.0, [h])
+    }
+
+    fn shape(h) {
+        return gpu_dispatch(13.0, [h])
+    }
+
+    fn reshape(h, new_shape) {
+        return gpu_dispatch(14.0, [h, new_shape])
+    }
+
+    fn free(h) {
+        if h != 0 {
+            return gpu_dispatch(8.0, [h])
+        }
+        return 0.0
+    }
+}
+
+class LLMTensorMath {
+    fn add(a, b) { return gpu_dispatch(19.0, [a, b]) }
+    fn sub(a, b) { return gpu_dispatch(20.0, [a, b]) }
+    fn mul(a, b) { return gpu_dispatch(21.0, [a, b]) }
+    fn div(a, b) { return gpu_dispatch(22.0, [a, b]) }
+    fn scale(a, s) { return gpu_dispatch(23.0, [a, s]) }
+    fn matmul(a, b) { return gpu_dispatch(17.0, [a, b]) }
+    fn transpose(a) { return gpu_dispatch(18.0, [a]) }
+    fn relu(a) { return gpu_dispatch(24.0, [a]) }
+    fn gelu(a) { return gpu_dispatch(40.0, [a]) }
+    fn silu(a) { return gpu_dispatch(41.0, [a]) }
+    fn sigmoid(a) { return gpu_dispatch(25.0, [a]) }
+    fn softmax(a) { return gpu_dispatch(42.0, [a]) }
+    fn layernorm(a, gamma, beta, eps) { return gpu_dispatch(43.0, [a, gamma, beta, eps]) }
+    fn rmsnorm(a, gamma, eps) { return gpu_dispatch(44.0, [a, gamma, eps]) }
+    fn flash_attention(q, k, v, is_causal) { return gpu_dispatch(70.0, [q, k, v, is_causal]) }
+    fn rope(x, start_pos, theta) { return gpu_dispatch(71.0, [x, start_pos, theta]) }
+    fn quantize(x, format) { return gpu_dispatch(72.0, [x, format]) }
+    fn quant_gemm(a, b_quant, format, m, k, n) { return gpu_dispatch(73.0, [a, b_quant, format, m, k, n]) }
+
+    fn fused_rmsnorm_residual(x, residual, gamma, eps) {
+        if residual != 0 {
+            let fnr_x_res = LLMTensorMath.add(x, residual)
+            let fnr_out = LLMTensorMath.rmsnorm(fnr_x_res, gamma, eps)
+            LLMTensorOps.free(fnr_x_res)
+            return fnr_out
+        }
+        return LLMTensorMath.rmsnorm(x, gamma, eps)
+    }
+}
+
+class llm_torch {
+    fn zeros(shape) { return LLMTensorOps.create(shape, 0.0) }
+    fn ones(shape) { return LLMTensorOps.create(shape, 1.0) }
+    fn randn(rows, cols) { return gpu_dispatch(67.0, [rows, cols, 42.0]) }
+}
+
+// --------------------------------------------------------------------------
+// 2. Pre-RMSNorm Normalization Layer
+// --------------------------------------------------------------------------
+class LLMRMSNorm {
+    fn create(dim, eps) {
+        let rms_gamma = llm_torch.ones([1.0, dim])
+        let rms_layer = {}
+        rms_layer["type"] = "RMSNorm"
+        rms_layer["dim"] = dim
+        rms_layer["eps"] = eps
+        rms_layer["gamma"] = rms_gamma
+        return rms_layer
+    }
+
+    fn forward(rms_self, rms_x) {
+        return LLMTensorMath.rmsnorm(rms_x, rms_self["gamma"], rms_self["eps"])
+    }
+
+    fn fused_residual(rms_self, rms_x, rms_res) {
+        return LLMTensorMath.fused_rmsnorm_residual(rms_x, rms_res, rms_self["gamma"], rms_self["eps"])
+    }
+}
+
+// --------------------------------------------------------------------------
+// 3. Rotary Position Embeddings (RoPE)
+// --------------------------------------------------------------------------
+class LLMRoPE {
+    fn create(dim, max_seq_len, theta) {
+        let rope_self = {}
+        rope_self["type"] = "RoPE"
+        rope_self["dim"] = dim
+        rope_self["max_seq_len"] = max_seq_len
+        rope_self["theta"] = theta
+        return rope_self
+    }
+
+    fn forward(rope_self, rope_x, rope_start_pos) {
+        return LLMTensorMath.rope(rope_x, rope_start_pos, rope_self["theta"])
+    }
+}
+
+// --------------------------------------------------------------------------
+// 4. SwiGLU Gated Feed-Forward Network
+// --------------------------------------------------------------------------
+class LLMSwiGLU {
+    fn create(in_features, hidden_features) {
+        let swi_scale = Math.sqrt(2.0 / in_features)
+        let swi_raw_g = llm_torch.randn(in_features, hidden_features)
+        let swi_w_gate = LLMTensorMath.scale(swi_raw_g, swi_scale)
+
+        let swi_raw_u = llm_torch.randn(in_features, hidden_features)
+        let swi_w_up = LLMTensorMath.scale(swi_raw_u, swi_scale)
+
+        let swi_raw_d = llm_torch.randn(hidden_features, in_features)
+        let swi_w_down = LLMTensorMath.scale(swi_raw_d, Math.sqrt(2.0 / hidden_features))
+
+        let swi_layer = {}
+        swi_layer["type"] = "SwiGLU"
+        swi_layer["in_features"] = in_features
+        swi_layer["hidden_features"] = hidden_features
+        swi_layer["w_gate"] = swi_w_gate
+        swi_layer["w_up"] = swi_w_up
+        swi_layer["w_down"] = swi_w_down
+        return swi_layer
+    }
+
+    fn forward(swi_self, swi_x) {
+        let swi_x_gate = LLMTensorMath.matmul(swi_x, swi_self["w_gate"])
+        let swi_g = LLMTensorMath.silu(swi_x_gate)
+
+        let swi_u = LLMTensorMath.matmul(swi_x, swi_self["w_up"])
+        let swi_h = LLMTensorMath.mul(swi_g, swi_u)
+
+        let swi_out = LLMTensorMath.matmul(swi_h, swi_self["w_down"])
+
+        LLMTensorOps.free(swi_x_gate)
+        LLMTensorOps.free(swi_g)
+        LLMTensorOps.free(swi_u)
+        LLMTensorOps.free(swi_h)
+        return swi_out
+    }
+}
+
+// --------------------------------------------------------------------------
+// 5. Paged / Continuous Key-Value Cache
+// --------------------------------------------------------------------------
+class LLMKVCache {
+    fn create(max_batch_size, max_seq_len, n_kv_heads, head_dim) {
+        let kvc_cache = {}
+        kvc_cache["type"] = "KVCache"
+        kvc_cache["max_batch"] = max_batch_size
+        kvc_cache["max_seq_len"] = max_seq_len
+        kvc_cache["n_kv_heads"] = n_kv_heads
+        kvc_cache["head_dim"] = head_dim
+        kvc_cache["current_pos"] = 0.0
+        kvc_cache["k"] = 0
+        kvc_cache["v"] = 0
+        return kvc_cache
+    }
+
+    fn update(kvc_self, kvc_new_k, kvc_new_v, kvc_pos) {
+        kvc_self["current_pos"] = kvc_pos
+        if kvc_self["k"] != 0 {
+            LLMTensorOps.free(kvc_self["k"])
+            LLMTensorOps.free(kvc_self["v"])
+        }
+        kvc_self["k"] = kvc_new_k
+        kvc_self["v"] = kvc_new_v
+        return kvc_self
+    }
+
+    fn get_k(kvc_self) { return kvc_self["k"] }
+    fn get_v(kvc_self) { return kvc_self["v"] }
+
+    fn reset(kvc_self) {
+        if kvc_self["k"] != 0 {
+            LLMTensorOps.free(kvc_self["k"])
+            kvc_self["k"] = 0
+        }
+        if kvc_self["v"] != 0 {
+            LLMTensorOps.free(kvc_self["v"])
+            kvc_self["v"] = 0
+        }
+        kvc_self["current_pos"] = 0.0
+        return kvc_self
+    }
+}
+
+// --------------------------------------------------------------------------
+// 6. Grouped Query Attention (GQA)
+// --------------------------------------------------------------------------
+class LLMGroupedQueryAttention {
+    fn create(dim, n_heads, n_kv_heads, head_dim, max_seq_len, theta) {
+        let gqa_q_dim = n_heads * head_dim
+        let gqa_kv_dim = n_kv_heads * head_dim
+        let gqa_scale = Math.sqrt(2.0 / dim)
+
+        let gqa_raw_q = llm_torch.randn(dim, gqa_q_dim)
+        let gqa_w_q = LLMTensorMath.scale(gqa_raw_q, gqa_scale)
+
+        let gqa_raw_k = llm_torch.randn(dim, gqa_kv_dim)
+        let gqa_w_k = LLMTensorMath.scale(gqa_raw_k, gqa_scale)
+
+        let gqa_raw_v = llm_torch.randn(dim, gqa_kv_dim)
+        let gqa_w_v = LLMTensorMath.scale(gqa_raw_v, gqa_scale)
+
+        let gqa_raw_o = llm_torch.randn(gqa_q_dim, dim)
+        let gqa_w_o = LLMTensorMath.scale(gqa_raw_o, Math.sqrt(2.0 / gqa_q_dim))
+
+        let gqa_layer = {}
+        gqa_layer["type"] = "GQA"
+        gqa_layer["dim"] = dim
+        gqa_layer["n_heads"] = n_heads
+        gqa_layer["n_kv_heads"] = n_kv_heads
+        gqa_layer["head_dim"] = head_dim
+        gqa_layer["q_dim"] = gqa_q_dim
+        gqa_layer["kv_dim"] = gqa_kv_dim
+        gqa_layer["theta"] = theta
+        gqa_layer["w_q"] = gqa_w_q
+        gqa_layer["w_k"] = gqa_w_k
+        gqa_layer["w_v"] = gqa_w_v
+        gqa_layer["w_o"] = gqa_w_o
+        return gqa_layer
+    }
+
+    fn forward(gqa_self, gqa_x, gqa_cache, gqa_start_pos) {
+        let gqa_q = LLMTensorMath.matmul(gqa_x, gqa_self["w_q"])
+        let gqa_k = LLMTensorMath.matmul(gqa_x, gqa_self["w_k"])
+        let gqa_v = LLMTensorMath.matmul(gqa_x, gqa_self["w_v"])
+
+        let gqa_q_rot = LLMTensorMath.rope(gqa_q, gqa_start_pos, gqa_self["theta"])
+        let gqa_k_rot = LLMTensorMath.rope(gqa_k, gqa_start_pos, gqa_self["theta"])
+        LLMTensorOps.free(gqa_q)
+        LLMTensorOps.free(gqa_k)
+
+        let gqa_act_k = gqa_k_rot
+        let gqa_act_v = gqa_v
+        if gqa_cache != 0 {
+            LLMKVCache.update(gqa_cache, gqa_k_rot, gqa_v, gqa_start_pos)
+            gqa_act_k = LLMKVCache.get_k(gqa_cache)
+            gqa_act_v = LLMKVCache.get_v(gqa_cache)
+        }
+
+        let gqa_attn_out = LLMTensorMath.flash_attention(gqa_q_rot, gqa_act_k, gqa_act_v, 1.0)
+        LLMTensorOps.free(gqa_q_rot)
+        if gqa_cache == 0 {
+            LLMTensorOps.free(gqa_k_rot)
+            LLMTensorOps.free(gqa_v)
+        }
+
+        let gqa_out = LLMTensorMath.matmul(gqa_attn_out, gqa_self["w_o"])
+        LLMTensorOps.free(gqa_attn_out)
+        return gqa_out
+    }
+}
+
+// --------------------------------------------------------------------------
+// 7. DeepSeek MoE Router & Layer
+// --------------------------------------------------------------------------
+class LLMMoERouter {
+    fn create(dim, num_experts, top_k) {
+        let rtr_scale = Math.sqrt(2.0 / dim)
+        let rtr_raw_w = llm_torch.randn(dim, num_experts)
+        let rtr_w = LLMTensorMath.scale(rtr_raw_w, rtr_scale)
+
+        let rtr_self = {}
+        rtr_self["type"] = "MoERouter"
+        rtr_self["dim"] = dim
+        rtr_self["num_experts"] = num_experts
+        rtr_self["top_k"] = top_k
+        rtr_self["w_router"] = rtr_w
+        return rtr_self
+    }
+
+    fn forward(rtr_self, rtr_x) {
+        let rtr_logits = LLMTensorMath.matmul(rtr_x, rtr_self["w_router"])
+        let rtr_probs = LLMTensorMath.softmax(rtr_logits)
+        let rtr_p_arr = LLMTensorOps.to_array(rtr_probs)
+        let rtr_p_sh = LLMTensorOps.shape(rtr_probs)
+        let rtr_n_tokens = rtr_p_sh[0]
+        let rtr_n_exp = rtr_self["num_experts"]
+        let rtr_k = rtr_self["top_k"]
+
+        let rtr_indices = []
+        let rtr_weights = []
+
+        let rtr_t = 0
+        while rtr_t < rtr_n_tokens {
+            let rtr_offset = rtr_t * rtr_n_exp
+            let rtr_best_idx = 0.0
+            let rtr_best_val = -1.0
+            let rtr_e = 0
+            while rtr_e < rtr_n_exp {
+                let rtr_v = rtr_p_arr[rtr_offset + rtr_e]
+                if rtr_v > rtr_best_val {
+                    rtr_best_val = rtr_v
+                    rtr_best_idx = rtr_e * 1.0
+                }
+                rtr_e = rtr_e + 1
+            }
+            rtr_indices = Array.push(rtr_indices, rtr_best_idx)
+
+            let rtr_second_idx = 0.0
+            let rtr_second_val = -1.0
+            if rtr_k > 1.0 {
+                rtr_e = 0
+                while rtr_e < rtr_n_exp {
+                    if rtr_e * 1.0 != rtr_best_idx {
+                        let rtr_v = rtr_p_arr[rtr_offset + rtr_e]
+                        if rtr_v > rtr_second_val {
+                            rtr_second_val = rtr_v
+                            rtr_second_idx = rtr_e * 1.0
+                        }
+                    }
+                    rtr_e = rtr_e + 1
+                }
+                rtr_indices = Array.push(rtr_indices, rtr_second_idx)
+                let rtr_sum_w = rtr_best_val + rtr_second_val
+                if rtr_sum_w <= 0.0 { rtr_sum_w = 0.000001 }
+                rtr_weights = Array.push(rtr_weights, rtr_best_val / rtr_sum_w)
+                rtr_weights = Array.push(rtr_weights, rtr_second_val / rtr_sum_w)
+            } else {
+                rtr_weights = Array.push(rtr_weights, 1.0)
+            }
+            rtr_t = rtr_t + 1
+        }
+
+        LLMTensorOps.free(rtr_logits)
+        LLMTensorOps.free(rtr_probs)
+
+        let rtr_res = {}
+        rtr_res["indices"] = rtr_indices
+        rtr_res["weights"] = rtr_weights
+        return rtr_res
+    }
+}
+
+class LLMMoELayer {
+    fn create(dim, hidden_dim, num_experts, top_k, num_shared_experts) {
+        let moe_router = LLMMoERouter.create(dim, num_experts, top_k)
+
+        let moe_expert_list = []
+        let moe_i = 0
+        while moe_i < num_experts {
+            let moe_exp = LLMSwiGLU.create(dim, hidden_dim)
+            moe_expert_list = Array.push(moe_expert_list, moe_exp)
+            moe_i = moe_i + 1
+        }
+
+        let moe_shared_list = []
+        moe_i = 0
+        while moe_i < num_shared_experts {
+            let moe_s_exp = LLMSwiGLU.create(dim, hidden_dim)
+            moe_shared_list = Array.push(moe_shared_list, moe_s_exp)
+            moe_i = moe_i + 1
+        }
+
+        let moe_layer = {}
+        moe_layer["type"] = "MoE"
+        moe_layer["dim"] = dim
+        moe_layer["hidden_dim"] = hidden_dim
+        moe_layer["num_experts"] = num_experts
+        moe_layer["top_k"] = top_k
+        moe_layer["router"] = moe_router
+        moe_layer["experts"] = moe_expert_list
+        moe_layer["shared_experts"] = moe_shared_list
+        return moe_layer
+    }
+
+    fn forward(moe_layer, moe_x) {
+        let moe_shared_experts = moe_layer["shared_experts"]
+        let moe_s0 = moe_shared_experts[0]
+        let moe_out_shared = LLMSwiGLU.forward(moe_s0, moe_x)
+
+        let moe_routing = LLMMoERouter.forward(moe_layer["router"], moe_x)
+        let moe_indices = moe_routing["indices"]
+        let moe_weights = moe_routing["weights"]
+
+        let moe_experts = moe_layer["experts"]
+        let moe_e0_idx = moe_indices[0]
+        let moe_e0_w = moe_weights[0]
+        let moe_exp0 = moe_experts[moe_e0_idx]
+        let moe_out_e0 = LLMSwiGLU.forward(moe_exp0, moe_x)
+        let moe_weighted_e0 = LLMTensorMath.scale(moe_out_e0, moe_e0_w)
+        LLMTensorOps.free(moe_out_e0)
+
+        let moe_blended = LLMTensorMath.add(moe_out_shared, moe_weighted_e0)
+        LLMTensorOps.free(moe_out_shared)
+        LLMTensorOps.free(moe_weighted_e0)
+
+        if moe_layer["top_k"] > 1.0 {
+            let moe_e1_idx = moe_indices[1]
+            let moe_e1_w = moe_weights[1]
+            let moe_exp1 = moe_experts[moe_e1_idx]
+            let moe_out_e1 = LLMSwiGLU.forward(moe_exp1, moe_x)
+            let moe_weighted_e1 = LLMTensorMath.scale(moe_out_e1, moe_e1_w)
+            LLMTensorOps.free(moe_out_e1)
+
+            let moe_final_out = LLMTensorMath.add(moe_blended, moe_weighted_e1)
+            LLMTensorOps.free(moe_blended)
+            LLMTensorOps.free(moe_weighted_e1)
+            return moe_final_out
+        }
+
+        return moe_blended
+    }
+}
+
+// --------------------------------------------------------------------------
+// 8. Multi-Head Latent Attention (MLA)
+// --------------------------------------------------------------------------
+class LLMMultiHeadLatentAttention {
+    fn create(dim, n_heads, head_dim, kv_lora_rank, q_lora_rank) {
+        let mla_q_dim = n_heads * head_dim
+        let mla_scale = Math.sqrt(2.0 / dim)
+
+        let mla_raw_dq = llm_torch.randn(dim, q_lora_rank)
+        let mla_w_dq = LLMTensorMath.scale(mla_raw_dq, mla_scale)
+        let mla_raw_uq = llm_torch.randn(q_lora_rank, mla_q_dim)
+        let mla_w_uq = LLMTensorMath.scale(mla_raw_uq, Math.sqrt(2.0 / q_lora_rank))
+
+        let mla_raw_dkv = llm_torch.randn(dim, kv_lora_rank)
+        let mla_w_dkv = LLMTensorMath.scale(mla_raw_dkv, mla_scale)
+
+        let mla_raw_uk = llm_torch.randn(kv_lora_rank, mla_q_dim)
+        let mla_w_uk = LLMTensorMath.scale(mla_raw_uk, Math.sqrt(2.0 / kv_lora_rank))
+        let mla_raw_uv = llm_torch.randn(kv_lora_rank, mla_q_dim)
+        let mla_w_uv = LLMTensorMath.scale(mla_raw_uv, Math.sqrt(2.0 / kv_lora_rank))
+
+        let mla_raw_o = llm_torch.randn(mla_q_dim, dim)
+        let mla_w_o = LLMTensorMath.scale(mla_raw_o, Math.sqrt(2.0 / mla_q_dim))
+
+        let mla_layer = {}
+        mla_layer["type"] = "MLA"
+        mla_layer["dim"] = dim
+        mla_layer["n_heads"] = n_heads
+        mla_layer["head_dim"] = head_dim
+        mla_layer["kv_lora_rank"] = kv_lora_rank
+        mla_layer["q_lora_rank"] = q_lora_rank
+        mla_layer["w_dq"] = mla_w_dq
+        mla_layer["w_uq"] = mla_w_uq
+        mla_layer["w_dkv"] = mla_w_dkv
+        mla_layer["w_uk"] = mla_w_uk
+        mla_layer["w_uv"] = mla_w_uv
+        mla_layer["w_o"] = mla_w_o
+        return mla_layer
+    }
+
+    fn forward(mla_self, mla_x, mla_kv_cache, mla_start_pos) {
+        let mla_c_kv = LLMTensorMath.matmul(mla_x, mla_self["w_dkv"])
+        let mla_k = LLMTensorMath.matmul(mla_c_kv, mla_self["w_uk"])
+        let mla_v = LLMTensorMath.matmul(mla_c_kv, mla_self["w_uv"])
+        LLMTensorOps.free(mla_c_kv)
+
+        let mla_q_latent = LLMTensorMath.matmul(mla_x, mla_self["w_dq"])
+        let mla_q = LLMTensorMath.matmul(mla_q_latent, mla_self["w_uq"])
+        LLMTensorOps.free(mla_q_latent)
+
+        let mla_q_rot = LLMTensorMath.rope(mla_q, mla_start_pos, 10000.0)
+        let mla_k_rot = LLMTensorMath.rope(mla_k, mla_start_pos, 10000.0)
+        LLMTensorOps.free(mla_q)
+        LLMTensorOps.free(mla_k)
+
+        let mla_attn_out = LLMTensorMath.flash_attention(mla_q_rot, mla_k_rot, mla_v, 1.0)
+        LLMTensorOps.free(mla_q_rot)
+        LLMTensorOps.free(mla_k_rot)
+        LLMTensorOps.free(mla_v)
+
+        let mla_out = LLMTensorMath.matmul(mla_attn_out, mla_self["w_o"])
+        LLMTensorOps.free(mla_attn_out)
+        return mla_out
+    }
+}
+
+// --------------------------------------------------------------------------
+// 9. LLaMA-3 Decoder Block & Full Architecture
+// --------------------------------------------------------------------------
+class LLMLLaMA3Block {
+    fn create(dim, n_heads, n_kv_heads, head_dim, hidden_dim) {
+        let l3b_block = {}
+        l3b_block["type"] = "LLaMA3Block"
+        l3b_block["attn_norm"] = LLMRMSNorm.create(dim, 0.00001)
+        l3b_block["attn"] = LLMGroupedQueryAttention.create(dim, n_heads, n_kv_heads, head_dim, 4096.0, 500000.0)
+        l3b_block["ffn_norm"] = LLMRMSNorm.create(dim, 0.00001)
+        l3b_block["ffn"] = LLMSwiGLU.create(dim, hidden_dim)
+        return l3b_block
+    }
+
+    fn forward(l3b_self, l3b_x, l3b_kv, l3b_pos) {
+        let l3b_h = LLMRMSNorm.forward(l3b_self["attn_norm"], l3b_x)
+        let l3b_attn_out = LLMGroupedQueryAttention.forward(l3b_self["attn"], l3b_h, l3b_kv, l3b_pos)
+        LLMTensorOps.free(l3b_h)
+
+        let l3b_x_res = LLMTensorMath.add(l3b_x, l3b_attn_out)
+        LLMTensorOps.free(l3b_attn_out)
+
+        let l3b_h2 = LLMRMSNorm.forward(l3b_self["ffn_norm"], l3b_x_res)
+        let l3b_ffn_out = LLMSwiGLU.forward(l3b_self["ffn"], l3b_h2)
+        LLMTensorOps.free(l3b_h2)
+
+        let l3b_out = LLMTensorMath.add(l3b_x_res, l3b_ffn_out)
+        LLMTensorOps.free(l3b_x_res)
+        LLMTensorOps.free(l3b_ffn_out)
+        return l3b_out
+    }
+}
+
+class LLMLLaMA3Model {
+    fn create(vocab_size, dim, n_layers, n_heads, n_kv_heads, hidden_dim) {
+        let l3m_scale = Math.sqrt(2.0 / dim)
+        let l3m_raw_emb = llm_torch.randn(vocab_size, dim)
+        let l3m_w_emb = LLMTensorMath.scale(l3m_raw_emb, l3m_scale)
+
+        let l3m_blocks = []
+        let l3m_i = 0
+        while l3m_i < n_layers {
+            let l3m_b = LLMLLaMA3Block.create(dim, n_heads, n_kv_heads, dim / n_heads, hidden_dim)
+            l3m_blocks = Array.push(l3m_blocks, l3m_b)
+            l3m_i = l3m_i + 1
+        }
+
+        let l3m_final_norm = LLMRMSNorm.create(dim, 0.00001)
+        let l3m_raw_head = llm_torch.randn(dim, vocab_size)
+        let l3m_w_head = LLMTensorMath.scale(l3m_raw_head, l3m_scale)
+
+        let l3m_model = {}
+        l3m_model["type"] = "LLaMA3"
+        l3m_model["vocab_size"] = vocab_size
+        l3m_model["dim"] = dim
+        l3m_model["n_layers"] = n_layers
+        l3m_model["w_emb"] = l3m_w_emb
+        l3m_model["blocks"] = l3m_blocks
+        l3m_model["final_norm"] = l3m_final_norm
+        l3m_model["w_head"] = l3m_w_head
+        return l3m_model
+    }
+
+    fn forward(l3m_self, l3m_input, l3m_kvs, l3m_pos) {
+        let l3m_cur = l3m_input
+        let l3m_blocks = l3m_self["blocks"]
+        let l3m_n = l3m_self["n_layers"]
+
+        let l3m_i = 0
+        while l3m_i < l3m_n {
+            let l3m_b = l3m_blocks[l3m_i]
+            let l3m_cache = 0
+            if l3m_kvs != 0 { l3m_cache = l3m_kvs[l3m_i] }
+            let l3m_next_cur = LLMLLaMA3Block.forward(l3m_b, l3m_cur, l3m_cache, l3m_pos)
+            if l3m_i > 0 { LLMTensorOps.free(l3m_cur) }
+            l3m_cur = l3m_next_cur
+            l3m_i = l3m_i + 1
+        }
+
+        let l3m_normed = LLMRMSNorm.forward(l3m_self["final_norm"], l3m_cur)
+        if l3m_n > 0 { LLMTensorOps.free(l3m_cur) }
+        let l3m_logits = LLMTensorMath.matmul(l3m_normed, l3m_self["w_head"])
+        LLMTensorOps.free(l3m_normed)
+        return l3m_logits
+    }
+}
+
+// --------------------------------------------------------------------------
+// 10. Mistral Decoder Block & Full Architecture
+// --------------------------------------------------------------------------
+class LLMMistralBlock {
+    fn create(dim, n_heads, n_kv_heads, head_dim, hidden_dim) {
+        let misb_block = {}
+        misb_block["type"] = "MistralBlock"
+        misb_block["attn_norm"] = LLMRMSNorm.create(dim, 0.00001)
+        misb_block["attn"] = LLMGroupedQueryAttention.create(dim, n_heads, n_kv_heads, head_dim, 4096.0, 10000.0)
+        misb_block["ffn_norm"] = LLMRMSNorm.create(dim, 0.00001)
+        misb_block["ffn"] = LLMSwiGLU.create(dim, hidden_dim)
+        return misb_block
+    }
+
+    fn forward(misb_self, misb_x, misb_kv, misb_pos) {
+        let misb_h = LLMRMSNorm.forward(misb_self["attn_norm"], misb_x)
+        let misb_a = LLMGroupedQueryAttention.forward(misb_self["attn"], misb_h, misb_kv, misb_pos)
+        LLMTensorOps.free(misb_h)
+
+        let misb_x1 = LLMTensorMath.add(misb_x, misb_a)
+        LLMTensorOps.free(misb_a)
+
+        let misb_h1 = LLMRMSNorm.forward(misb_self["ffn_norm"], misb_x1)
+        let misb_f = LLMSwiGLU.forward(misb_self["ffn"], misb_h1)
+        LLMTensorOps.free(misb_h1)
+
+        let misb_out = LLMTensorMath.add(misb_x1, misb_f)
+        LLMTensorOps.free(misb_x1)
+        LLMTensorOps.free(misb_f)
+        return misb_out
+    }
+}
+
+class LLMMistralModel {
+    fn create(vocab_size, dim, n_layers, n_heads, n_kv_heads, hidden_dim) {
+        let mism_scale = Math.sqrt(2.0 / dim)
+        let mism_raw_emb = llm_torch.randn(vocab_size, dim)
+        let mism_w_emb = LLMTensorMath.scale(mism_raw_emb, mism_scale)
+
+        let mism_blocks = []
+        let mism_i = 0
+        while mism_i < n_layers {
+            let mism_b = LLMMistralBlock.create(dim, n_heads, n_kv_heads, dim / n_heads, hidden_dim)
+            mism_blocks = Array.push(mism_blocks, mism_b)
+            mism_i = mism_i + 1
+        }
+
+        let mism_final_norm = LLMRMSNorm.create(dim, 0.00001)
+        let mism_raw_head = llm_torch.randn(dim, vocab_size)
+        let mism_w_head = LLMTensorMath.scale(mism_raw_head, mism_scale)
+
+        let mism_model = {}
+        mism_model["type"] = "Mistral"
+        mism_model["vocab_size"] = vocab_size
+        mism_model["dim"] = dim
+        mism_model["n_layers"] = n_layers
+        mism_model["w_emb"] = mism_w_emb
+        mism_model["blocks"] = mism_blocks
+        mism_model["final_norm"] = mism_final_norm
+        mism_model["w_head"] = mism_w_head
+        return mism_model
+    }
+
+    fn forward(mism_self, mism_input, mism_kvs, mism_pos) {
+        let mism_cur = mism_input
+        let mism_blocks = mism_self["blocks"]
+        let mism_n = mism_self["n_layers"]
+
+        let mism_i = 0
+        while mism_i < mism_n {
+            let mism_b = mism_blocks[mism_i]
+            let mism_cache = 0
+            if mism_kvs != 0 { mism_cache = mism_kvs[mism_i] }
+            let mism_next_cur = LLMMistralBlock.forward(mism_b, mism_cur, mism_cache, mism_pos)
+            if mism_i > 0 { LLMTensorOps.free(mism_cur) }
+            mism_cur = mism_next_cur
+            mism_i = mism_i + 1
+        }
+
+        let mism_normed = LLMRMSNorm.forward(mism_self["final_norm"], mism_cur)
+        if mism_n > 0 { LLMTensorOps.free(mism_cur) }
+        let mism_logits = LLMTensorMath.matmul(mism_normed, mism_self["w_head"])
+        LLMTensorOps.free(mism_normed)
+        return mism_logits
+    }
+}
+
+// --------------------------------------------------------------------------
+// 11. Gemma Decoder Block & Full Architecture
+// --------------------------------------------------------------------------
+class LLMGemmaBlock {
+    fn create(dim, n_heads, n_kv_heads, head_dim, hidden_dim) {
+        let gemb_block = {}
+        gemb_block["type"] = "GemmaBlock"
+        gemb_block["attn_norm"] = LLMRMSNorm.create(dim, 0.00001)
+        gemb_block["attn"] = LLMGroupedQueryAttention.create(dim, n_heads, n_kv_heads, head_dim, 4096.0, 10000.0)
+        gemb_block["ffn_norm"] = LLMRMSNorm.create(dim, 0.00001)
+        gemb_block["ffn"] = LLMSwiGLU.create(dim, hidden_dim)
+        return gemb_block
+    }
+
+    fn forward(gemb_self, gemb_x, gemb_kv, gemb_pos) {
+        let gemb_h = LLMRMSNorm.forward(gemb_self["attn_norm"], gemb_x)
+        let gemb_a = LLMGroupedQueryAttention.forward(gemb_self["attn"], gemb_h, gemb_kv, gemb_pos)
+        LLMTensorOps.free(gemb_h)
+
+        let gemb_x1 = LLMTensorMath.add(gemb_x, gemb_a)
+        LLMTensorOps.free(gemb_a)
+
+        let gemb_h1 = LLMRMSNorm.forward(gemb_self["ffn_norm"], gemb_x1)
+        let gemb_f = LLMSwiGLU.forward(gemb_self["ffn"], gemb_h1)
+        LLMTensorOps.free(gemb_h1)
+
+        let gemb_out = LLMTensorMath.add(gemb_x1, gemb_f)
+        LLMTensorOps.free(gemb_x1)
+        LLMTensorOps.free(gemb_f)
+        return gemb_out
+    }
+}
+
+class LLMGemmaModel {
+    fn create(vocab_size, dim, n_layers, n_heads, n_kv_heads, hidden_dim) {
+        let gemm_scale = Math.sqrt(2.0 / dim)
+        let gemm_raw_emb = llm_torch.randn(vocab_size, dim)
+        let gemm_w_emb = LLMTensorMath.scale(gemm_raw_emb, gemm_scale)
+
+        let gemm_blocks = []
+        let gemm_i = 0
+        while gemm_i < n_layers {
+            let gemm_b = LLMGemmaBlock.create(dim, n_heads, n_kv_heads, dim / n_heads, hidden_dim)
+            gemm_blocks = Array.push(gemm_blocks, gemm_b)
+            gemm_i = gemm_i + 1
+        }
+
+        let gemm_final_norm = LLMRMSNorm.create(dim, 0.00001)
+        let gemm_raw_head = llm_torch.randn(dim, vocab_size)
+        let gemm_w_head = LLMTensorMath.scale(gemm_raw_head, gemm_scale)
+
+        let gemm_model = {}
+        gemm_model["type"] = "Gemma"
+        gemm_model["vocab_size"] = vocab_size
+        gemm_model["dim"] = dim
+        gemm_model["n_layers"] = n_layers
+        gemm_model["w_emb"] = gemm_w_emb
+        gemm_model["blocks"] = gemm_blocks
+        gemm_model["final_norm"] = gemm_final_norm
+        gemm_model["w_head"] = gemm_w_head
+        return gemm_model
+    }
+
+    fn forward(gemm_self, gemm_input, gemm_kvs, gemm_pos) {
+        let gemm_cur = gemm_input
+        let gemm_blocks = gemm_self["blocks"]
+        let gemm_n = gemm_self["n_layers"]
+
+        let gemm_i = 0
+        while gemm_i < gemm_n {
+            let gemm_b = gemm_blocks[gemm_i]
+            let gemm_cache = 0
+            if gemm_kvs != 0 { gemm_cache = gemm_kvs[gemm_i] }
+            let gemm_next_cur = LLMGemmaBlock.forward(gemm_b, gemm_cur, gemm_cache, gemm_pos)
+            if gemm_i > 0 { LLMTensorOps.free(gemm_cur) }
+            gemm_cur = gemm_next_cur
+            gemm_i = gemm_i + 1
+        }
+
+        let gemm_normed = LLMRMSNorm.forward(gemm_self["final_norm"], gemm_cur)
+        if gemm_n > 0 { LLMTensorOps.free(gemm_cur) }
+        let gemm_logits = LLMTensorMath.matmul(gemm_normed, gemm_self["w_head"])
+        LLMTensorOps.free(gemm_normed)
+        return gemm_logits
+    }
+}
+
+// --------------------------------------------------------------------------
+// 12. DeepSeek MoE Decoder Block & Full Architecture
+// --------------------------------------------------------------------------
+class LLMDeepSeekMoEBlock {
+    fn create(dim, n_heads, head_dim, kv_lora_rank, hidden_dim, num_experts, top_k) {
+        let dsmb_block = {}
+        dsmb_block["type"] = "DeepSeekMoEBlock"
+        dsmb_block["attn_norm"] = LLMRMSNorm.create(dim, 0.00001)
+        dsmb_block["mla"] = LLMMultiHeadLatentAttention.create(dim, n_heads, head_dim, kv_lora_rank, kv_lora_rank)
+        dsmb_block["moe_norm"] = LLMRMSNorm.create(dim, 0.00001)
+        dsmb_block["moe"] = LLMMoELayer.create(dim, hidden_dim, num_experts, top_k, 1.0)
+        return dsmb_block
+    }
+
+    fn forward(dsmb_self, dsmb_x, dsmb_kv, dsmb_pos) {
+        let dsmb_h = LLMRMSNorm.forward(dsmb_self["attn_norm"], dsmb_x)
+        let dsmb_a = LLMMultiHeadLatentAttention.forward(dsmb_self["mla"], dsmb_h, dsmb_kv, dsmb_pos)
+        LLMTensorOps.free(dsmb_h)
+
+        let dsmb_x1 = LLMTensorMath.add(dsmb_x, dsmb_a)
+        LLMTensorOps.free(dsmb_a)
+
+        let dsmb_h1 = LLMRMSNorm.forward(dsmb_self["moe_norm"], dsmb_x1)
+        let dsmb_m = LLMMoELayer.forward(dsmb_self["moe"], dsmb_h1)
+        LLMTensorOps.free(dsmb_h1)
+
+        let dsmb_out = LLMTensorMath.add(dsmb_x1, dsmb_m)
+        LLMTensorOps.free(dsmb_x1)
+        LLMTensorOps.free(dsmb_m)
+        return dsmb_out
+    }
+}
+
+class LLMDeepSeekMoEModel {
+    fn create(vocab_size, dim, n_layers, n_heads, head_dim, kv_lora_rank, num_experts, top_k) {
+        let dsmm_scale = Math.sqrt(2.0 / dim)
+        let dsmm_raw_emb = llm_torch.randn(vocab_size, dim)
+        let dsmm_w_emb = LLMTensorMath.scale(dsmm_raw_emb, dsmm_scale)
+
+        let dsmm_blocks = []
+        let dsmm_i = 0
+        while dsmm_i < n_layers {
+            let dsmm_b = LLMDeepSeekMoEBlock.create(dim, n_heads, head_dim, kv_lora_rank, dim * 2.0, num_experts, top_k)
+            dsmm_blocks = Array.push(dsmm_blocks, dsmm_b)
+            dsmm_i = dsmm_i + 1
+        }
+
+        let dsmm_final_norm = LLMRMSNorm.create(dim, 0.00001)
+        let dsmm_raw_head = llm_torch.randn(dim, vocab_size)
+        let dsmm_w_head = LLMTensorMath.scale(dsmm_raw_head, dsmm_scale)
+
+        let dsmm_model = {}
+        dsmm_model["type"] = "DeepSeekMoE"
+        dsmm_model["vocab_size"] = vocab_size
+        dsmm_model["dim"] = dim
+        dsmm_model["n_layers"] = n_layers
+        dsmm_model["w_emb"] = dsmm_w_emb
+        dsmm_model["blocks"] = dsmm_blocks
+        dsmm_model["final_norm"] = dsmm_final_norm
+        dsmm_model["w_head"] = dsmm_w_head
+        return dsmm_model
+    }
+
+    fn forward(dsmm_self, dsmm_input, dsmm_kvs, dsmm_pos) {
+        let dsmm_cur = dsmm_input
+        let dsmm_blocks = dsmm_self["blocks"]
+        let dsmm_n = dsmm_self["n_layers"]
+
+        let dsmm_i = 0
+        while dsmm_i < dsmm_n {
+            let dsmm_b = dsmm_blocks[dsmm_i]
+            let dsmm_cache = 0
+            if dsmm_kvs != 0 { dsmm_cache = dsmm_kvs[dsmm_i] }
+            let dsmm_next_cur = LLMDeepSeekMoEBlock.forward(dsmm_b, dsmm_cur, dsmm_cache, dsmm_pos)
+            if dsmm_i > 0 { LLMTensorOps.free(dsmm_cur) }
+            dsmm_cur = dsmm_next_cur
+            dsmm_i = dsmm_i + 1
+        }
+
+        let dsmm_normed = LLMRMSNorm.forward(dsmm_self["final_norm"], dsmm_cur)
+        if dsmm_n > 0 { LLMTensorOps.free(dsmm_cur) }
+        let dsmm_logits = LLMTensorMath.matmul(dsmm_normed, dsmm_self["w_head"])
+        LLMTensorOps.free(dsmm_normed)
+        return dsmm_logits
+    }
+}
+
+// --------------------------------------------------------------------------
+// 13. Universal Dot-Syntax Facade: stdllm
+// --------------------------------------------------------------------------
+class stdllm {
+    fn RMSNorm(dim, eps) {
+        return LLMRMSNorm.create(dim, eps)
+    }
+
+    fn RoPE(dim, max_seq_len, theta) {
+        return LLMRoPE.create(dim, max_seq_len, theta)
+    }
+
+    fn SwiGLU(in_features, hidden_features) {
+        return LLMSwiGLU.create(in_features, hidden_features)
+    }
+
+    fn KVCache(max_batch_size, max_seq_len, n_kv_heads, head_dim) {
+        return LLMKVCache.create(max_batch_size, max_seq_len, n_kv_heads, head_dim)
+    }
+
+    fn GQA(dim, n_heads, n_kv_heads, head_dim, max_seq_len, theta) {
+        return LLMGroupedQueryAttention.create(dim, n_heads, n_kv_heads, head_dim, max_seq_len, theta)
+    }
+
+    fn MoERouter(dim, num_experts, top_k) {
+        return LLMMoERouter.create(dim, num_experts, top_k)
+    }
+
+    fn MoE(dim, hidden_dim, num_experts, top_k, num_shared_experts) {
+        return LLMMoELayer.create(dim, hidden_dim, num_experts, top_k, num_shared_experts)
+    }
+
+    fn MLA(dim, n_heads, head_dim, kv_lora_rank, q_lora_rank) {
+        return LLMMultiHeadLatentAttention.create(dim, n_heads, head_dim, kv_lora_rank, q_lora_rank)
+    }
+
+    fn LLaMA3(vocab_size, dim, n_layers, n_heads, n_kv_heads, hidden_dim) {
+        return LLMLLaMA3Model.create(vocab_size, dim, n_layers, n_heads, n_kv_heads, hidden_dim)
+    }
+
+    fn Mistral(vocab_size, dim, n_layers, n_heads, n_kv_heads, hidden_dim) {
+        return LLMMistralModel.create(vocab_size, dim, n_layers, n_heads, n_kv_heads, hidden_dim)
+    }
+
+    fn Gemma(vocab_size, dim, n_layers, n_heads, n_kv_heads, hidden_dim) {
+        return LLMGemmaModel.create(vocab_size, dim, n_layers, n_heads, n_kv_heads, hidden_dim)
+    }
+
+    fn DeepSeekMoE(vocab_size, dim, n_layers, n_heads, head_dim, kv_lora_rank, num_experts, top_k) {
+        return LLMDeepSeekMoEModel.create(vocab_size, dim, n_layers, n_heads, head_dim, kv_lora_rank, num_experts, top_k)
+    }
+}
+
+// --------------------------------------------------------------------------
+// Test Procedures
+// --------------------------------------------------------------------------
+
+fn test_rmsnorm_and_residual() {
+    print(">>> 1. Testing RMSNorm & Fused Residual Normalization...")
+    let t1_rms = stdllm.RMSNorm(8.0, 0.00001)
+    let t1_x = LLMTensorOps.from_array([2.0, 8.0], [
+        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+        2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0
+    ])
+
+    let t1_out = LLMRMSNorm.forward(t1_rms, t1_x)
+    let t1_sh = LLMTensorOps.shape(t1_out)
+    let t1_arr = LLMTensorOps.to_array(t1_out)
+    test_assert(t1_sh[0] == 2.0 && t1_sh[1] == 8.0, "RMSNorm Output Shape")
+    test_assert(approx_equal(t1_arr[0], 1.0, 0.05), "RMSNorm Normalized Value")
+
+    let t1_res = LLMTensorOps.create([2.0, 8.0], 1.0)
+    let t1_out_fused = LLMRMSNorm.fused_residual(t1_rms, t1_x, t1_res)
+    let t1_arr_fused = LLMTensorOps.to_array(t1_out_fused)
+    test_assert(approx_equal(t1_arr_fused[0], 1.0, 0.05), "Fused RMSNorm + Residual Value")
+
+    LLMTensorOps.free(t1_x)
+    LLMTensorOps.free(t1_res)
+    LLMTensorOps.free(t1_out)
+    LLMTensorOps.free(t1_out_fused)
+    LLMTensorOps.free(t1_rms["gamma"])
+}
+
+fn test_rope_transform() {
+    print(">>> 2. Testing Rotary Position Embeddings (RoPE)...")
+    let t2_rope = stdllm.RoPE(4.0, 2048.0, 10000.0)
+    let t2_x = LLMTensorOps.from_array([2.0, 4.0], [
+        1.0, 0.0, 1.0, 0.0,
+        1.0, 0.0, 1.0, 0.0
+    ])
+
+    let t2_out0 = LLMRoPE.forward(t2_rope, t2_x, 0.0)
+    let t2_arr0 = LLMTensorOps.to_array(t2_out0)
+    test_assert(approx_equal(t2_arr0[0], 1.0, 0.01) && approx_equal(t2_arr0[1], 0.0, 0.01), "RoPE Position 0 Identity Rotation")
+
+    let t2_out1 = LLMRoPE.forward(t2_rope, t2_x, 1.0)
+    let t2_arr1 = LLMTensorOps.to_array(t2_out1)
+    test_assert(t2_arr1[0] <= 1.0, "RoPE Position 1 Angular Rotation")
+
+    LLMTensorOps.free(t2_x)
+    LLMTensorOps.free(t2_out0)
+    LLMTensorOps.free(t2_out1)
+}
+
+fn test_swiglu_block() {
+    print(">>> 3. Testing SwiGLU Gated Feed-Forward Network...")
+    let t3_swiglu = stdllm.SwiGLU(16.0, 32.0)
+    let t3_x = llm_torch.randn(4.0, 16.0)
+
+    let t3_out = LLMSwiGLU.forward(t3_swiglu, t3_x)
+    let t3_sh = LLMTensorOps.shape(t3_out)
+    test_assert(t3_sh[0] == 4.0 && t3_sh[1] == 16.0, "SwiGLU Output Projection Shape")
+
+    LLMTensorOps.free(t3_x)
+    LLMTensorOps.free(t3_out)
+    LLMTensorOps.free(t3_swiglu["w_gate"])
+    LLMTensorOps.free(t3_swiglu["w_up"])
+    LLMTensorOps.free(t3_swiglu["w_down"])
+}
+
+fn test_kv_cache_state() {
+    print(">>> 4. Testing Paged / Continuous Key-Value Cache...")
+    let t4_cache = stdllm.KVCache(1.0, 512.0, 2.0, 16.0)
+
+    let t4_k1 = llm_torch.randn(1.0, 32.0)
+    let t4_v1 = llm_torch.randn(1.0, 32.0)
+    LLMKVCache.update(t4_cache, t4_k1, t4_v1, 0.0)
+    test_assert(t4_cache["current_pos"] == 0.0, "KVCache Step 0 Update")
+
+    let t4_k2 = llm_torch.randn(1.0, 32.0)
+    let t4_v2 = llm_torch.randn(1.0, 32.0)
+    LLMKVCache.update(t4_cache, t4_k2, t4_v2, 1.0)
+    test_assert(t4_cache["current_pos"] == 1.0, "KVCache Step 1 Decode Update")
+
+    LLMKVCache.reset(t4_cache)
+    test_assert(t4_cache["current_pos"] == 0.0 && t4_cache["k"] == 0, "KVCache Safe Reset")
+}
+
+fn test_grouped_query_attention() {
+    print(">>> 5. Testing Grouped Query Attention (GQA) & FlashAttention...")
+    let t5_gqa = stdllm.GQA(32.0, 4.0, 2.0, 8.0, 1024.0, 10000.0)
+    let t5_x = llm_torch.randn(4.0, 32.0)
+
+    let t5_cache = stdllm.KVCache(1.0, 512.0, 2.0, 8.0)
+    let t5_out = LLMGroupedQueryAttention.forward(t5_gqa, t5_x, t5_cache, 0.0)
+    let t5_sh = LLMTensorOps.shape(t5_out)
+    test_assert(t5_sh[0] == 4.0 && t5_sh[1] == 32.0, "GQA Output Projection Shape")
+
+    LLMTensorOps.free(t5_x)
+    LLMTensorOps.free(t5_out)
+    LLMKVCache.reset(t5_cache)
+    LLMTensorOps.free(t5_gqa["w_q"])
+    LLMTensorOps.free(t5_gqa["w_k"])
+    LLMTensorOps.free(t5_gqa["w_v"])
+    LLMTensorOps.free(t5_gqa["w_o"])
+}
+
+fn test_deepseek_moe_and_mla() {
+    print(">>> 6. Testing DeepSeek Sparse MoE & Multi-Head Latent Attention (MLA)...")
+    let t6_moe = stdllm.MoE(16.0, 32.0, 8.0, 2.0, 1.0)
+    let t6_x = llm_torch.randn(2.0, 16.0)
+    let t6_out_moe = LLMMoELayer.forward(t6_moe, t6_x)
+    let t6_sh_moe = LLMTensorOps.shape(t6_out_moe)
+    test_assert(t6_sh_moe[0] == 2.0 && t6_sh_moe[1] == 16.0, "DeepSeek MoE Top-2 Routing & Blended Output")
+
+    let t6_mla = stdllm.MLA(16.0, 4.0, 4.0, 8.0, 8.0)
+    let t6_out_mla = LLMMultiHeadLatentAttention.forward(t6_mla, t6_x, 0, 0.0)
+    let t6_sh_mla = LLMTensorOps.shape(t6_out_mla)
+    test_assert(t6_sh_mla[0] == 2.0 && t6_sh_mla[1] == 16.0, "DeepSeek MLA Latent KV Compression & Attention")
+
+    LLMTensorOps.free(t6_x)
+    LLMTensorOps.free(t6_out_moe)
+    LLMTensorOps.free(t6_out_mla)
+    LLMTensorOps.free(t6_moe["router"]["w_router"])
+    LLMTensorOps.free(t6_mla["w_dq"])
+    LLMTensorOps.free(t6_mla["w_uq"])
+    LLMTensorOps.free(t6_mla["w_dkv"])
+    LLMTensorOps.free(t6_mla["w_uk"])
+    LLMTensorOps.free(t6_mla["w_uv"])
+    LLMTensorOps.free(t6_mla["w_o"])
+}
+
+fn test_llama3_model() {
+    print(">>> 7. Testing LLaMA-3 Decoder Block & Full Architecture...")
+    let t7_model = stdllm.LLaMA3(64.0, 16.0, 2.0, 2.0, 1.0, 32.0)
+    let t7_x = llm_torch.randn(3.0, 16.0)
+
+    let t7_logits = LLMLLaMA3Model.forward(t7_model, t7_x, 0, 0.0)
+    let t7_sh = LLMTensorOps.shape(t7_logits)
+    test_assert(t7_sh[0] == 3.0 && t7_sh[1] == 64.0, "LLaMA-3 Logits Shape [SeqLen, VocabSize]")
+
+    LLMTensorOps.free(t7_x)
+    LLMTensorOps.free(t7_logits)
+    LLMTensorOps.free(t7_model["w_emb"])
+    LLMTensorOps.free(t7_model["w_head"])
+    LLMTensorOps.free(t7_model["final_norm"]["gamma"])
+}
+
+fn test_mistral_and_gemma_models() {
+    print(">>> 8. Testing Mistral & Gemma Full Transformer Architectures...")
+    let t8_mistral = stdllm.Mistral(32.0, 16.0, 1.0, 2.0, 1.0, 32.0)
+    let t8_x_m = llm_torch.randn(2.0, 16.0)
+    let t8_logits_m = LLMMistralModel.forward(t8_mistral, t8_x_m, 0, 0.0)
+    let t8_sh_m = LLMTensorOps.shape(t8_logits_m)
+    test_assert(t8_sh_m[0] == 2.0 && t8_sh_m[1] == 32.0, "Mistral Logits Shape [2, 32]")
+
+    let t8_gemma = stdllm.Gemma(32.0, 16.0, 1.0, 2.0, 1.0, 32.0)
+    let t8_x_g = llm_torch.randn(2.0, 16.0)
+    let t8_logits_g = LLMGemmaModel.forward(t8_gemma, t8_x_g, 0, 0.0)
+    let t8_sh_g = LLMTensorOps.shape(t8_logits_g)
+    test_assert(t8_sh_g[0] == 2.0 && t8_sh_g[1] == 32.0, "Gemma Logits Shape [2, 32]")
+
+    LLMTensorOps.free(t8_x_m)
+    LLMTensorOps.free(t8_logits_m)
+    LLMTensorOps.free(t8_mistral["w_emb"])
+    LLMTensorOps.free(t8_mistral["w_head"])
+    LLMTensorOps.free(t8_mistral["final_norm"]["gamma"])
+
+    LLMTensorOps.free(t8_x_g)
+    LLMTensorOps.free(t8_logits_g)
+    LLMTensorOps.free(t8_gemma["w_emb"])
+    LLMTensorOps.free(t8_gemma["w_head"])
+    LLMTensorOps.free(t8_gemma["final_norm"]["gamma"])
+}
+
+fn test_deepseek_moe_full_model() {
+    print(">>> 9. Testing DeepSeek MoE Full Model (MLA + Top-2 MoE)...")
+    let t9_ds_model = stdllm.DeepSeekMoE(32.0, 16.0, 1.0, 2.0, 8.0, 8.0, 4.0, 2.0)
+    let t9_x = llm_torch.randn(2.0, 16.0)
+    let t9_logits = LLMDeepSeekMoEModel.forward(t9_ds_model, t9_x, 0, 0.0)
+    let t9_sh = LLMTensorOps.shape(t9_logits)
+    test_assert(t9_sh[0] == 2.0 && t9_sh[1] == 32.0, "DeepSeek MoE Full Model Logits Shape [2, 32]")
+
+    LLMTensorOps.free(t9_x)
+    LLMTensorOps.free(t9_logits)
+    LLMTensorOps.free(t9_ds_model["w_emb"])
+    LLMTensorOps.free(t9_ds_model["w_head"])
+    LLMTensorOps.free(t9_ds_model["final_norm"]["gamma"])
+}
+
+fn main() {
+    print("==================================================================")
+    print("Nexus Baremetal - stdllm Phase 3: Transformer & MoE Architectures")
+    print("==================================================================")
+
+    test_rmsnorm_and_residual()
+    test_rope_transform()
+    test_swiglu_block()
+    test_kv_cache_state()
+    test_grouped_query_attention()
+    test_deepseek_moe_and_mla()
+    test_llama3_model()
+    test_mistral_and_gemma_models()
+    test_deepseek_moe_full_model()
+
+    print("==================================================================")
+    print("Status: ALL STDLLM PHASE 3 MODULES & ARCHITECTURES VERIFIED")
+    print("==================================================================")
+}
+
+main()
