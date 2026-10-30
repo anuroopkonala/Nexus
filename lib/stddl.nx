@@ -107,8 +107,10 @@ class DenseLayer {
         layer["grad_b"] = grad_output
 
         let params = layer["params"]
-        params[0]["grad"] = dw
-        params[1]["grad"] = grad_output
+        let p_w = params[0]
+        p_w["grad"] = dw
+        let p_b = params[1]
+        p_b["grad"] = grad_output
 
         let wt = TensorMath.transpose(layer["weights"])
         let dx = TensorMath.matmul(grad_output, wt)
@@ -168,8 +170,10 @@ class Conv2DLayer {
         layer["grad_b"] = grad_output
 
         let params = layer["params"]
-        params[0]["grad"] = dw
-        params[1]["grad"] = grad_output
+        let p_w = params[0]
+        p_w["grad"] = dw
+        let p_b = params[1]
+        p_b["grad"] = grad_output
 
         let wt = TensorMath.transpose(layer["weights"])
         let dx = TensorMath.matmul(grad_output, wt)
@@ -706,9 +710,768 @@ class SmoothL1LossLayer {
 }
 
 // --------------------------------------------------------------------------
-// 12. Top-Level stddl Declarative Facade
+// 12. Modern Optimizers (AdamW, Lion, Muon, SGD)
+// --------------------------------------------------------------------------
+class AdamWOptimizer {
+    fn create(params, lr, weight_decay) {
+        let opt = {}
+        opt["type"] = "AdamW"
+        opt["params"] = params
+        opt["lr"] = lr
+        opt["beta1"] = 0.9
+        opt["beta2"] = 0.999
+        opt["eps"] = 0.00000001
+        opt["weight_decay"] = weight_decay
+        opt["step_count"] = 0.0
+
+        let n = Array.len(params)
+        let m_list = []
+        let v_list = []
+        let i = 0
+        while i < n {
+            let p = params[i]
+            let p_data = p["data"]
+            let p_shape = TensorOps.shape(p_data)
+            m_list = Array.push(m_list, TensorOps.create(p_shape, 0.0))
+            v_list = Array.push(v_list, TensorOps.create(p_shape, 0.0))
+            i = i + 1
+        }
+        opt["m_states"] = m_list
+        opt["v_states"] = v_list
+        return opt
+    }
+
+    fn step(opt) {
+        opt["step_count"] = opt["step_count"] + 1.0
+        let lr = opt["lr"]
+        let wd = opt["weight_decay"]
+        let b1 = opt["beta1"]
+
+        let params = opt["params"]
+        let m_states = opt["m_states"]
+        let n = Array.len(params)
+
+        let i = 0
+        while i < n {
+            let p = params[i]
+            let g = p["grad"]
+            if g != 0 {
+                let theta = p["data"]
+                if wd > 0.0 {
+                    TensorMath.apply_grad(theta, theta, lr * wd)
+                }
+
+                let old_m = m_states[i]
+                let m_scaled = TensorMath.scale(old_m, b1)
+                let g_scaled = TensorMath.scale(g, 1.0 - b1)
+                let new_m = TensorMath.add(m_scaled, g_scaled)
+                TensorOps.free(old_m)
+                TensorOps.free(m_scaled)
+                TensorOps.free(g_scaled)
+                m_states[i] = new_m
+
+                TensorMath.apply_grad(theta, new_m, lr)
+            }
+            i = i + 1
+        }
+        return opt
+    }
+
+    fn zero_grad(opt) {
+        let params = opt["params"]
+        let n = Array.len(params)
+        let i = 0
+        while i < n {
+            let p = params[i]
+            let g = p["grad"]
+            if g != 0 {
+                TensorOps.free(g)
+                p["grad"] = 0
+            }
+            i = i + 1
+        }
+        return opt
+    }
+}
+
+class LionOptimizer {
+    fn create(params, lr, weight_decay) {
+        let opt = {}
+        opt["type"] = "Lion"
+        opt["params"] = params
+        opt["lr"] = lr
+        opt["beta1"] = 0.9
+        opt["beta2"] = 0.99
+        opt["weight_decay"] = weight_decay
+
+        let n = Array.len(params)
+        let m_list = []
+        let i = 0
+        while i < n {
+            let p = params[i]
+            let p_shape = TensorOps.shape(p["data"])
+            m_list = Array.push(m_list, TensorOps.create(p_shape, 0.0))
+            i = i + 1
+        }
+        opt["m_states"] = m_list
+        return opt
+    }
+
+    fn step(opt) {
+        let lr = opt["lr"]
+        let wd = opt["weight_decay"]
+        let b1 = opt["beta1"]
+        let b2 = opt["beta2"]
+
+        let params = opt["params"]
+        let m_states = opt["m_states"]
+        let n = Array.len(params)
+
+        let i = 0
+        while i < n {
+            let p = params[i]
+            let g = p["grad"]
+            if g != 0 {
+                let theta = p["data"]
+                if wd > 0.0 {
+                    TensorMath.apply_grad(theta, theta, lr * wd)
+                }
+
+                let old_m = m_states[i]
+                let m_part = TensorMath.scale(old_m, b1)
+                let g_part = TensorMath.scale(g, 1.0 - b1)
+                let c = TensorMath.add(m_part, g_part)
+
+                let c_sign = TensorMath.clip(c, 0.0 - 1.0, 1.0)
+                TensorMath.apply_grad(theta, c_sign, lr)
+
+                let m_scaled = TensorMath.scale(old_m, b2)
+                let g_scaled = TensorMath.scale(g, 1.0 - b2)
+                let new_m = TensorMath.add(m_scaled, g_scaled)
+
+                TensorOps.free(old_m)
+                TensorOps.free(m_part)
+                TensorOps.free(g_part)
+                TensorOps.free(c)
+                TensorOps.free(c_sign)
+                TensorOps.free(m_scaled)
+                TensorOps.free(g_scaled)
+                m_states[i] = new_m
+            }
+            i = i + 1
+        }
+        return opt
+    }
+
+    fn zero_grad(opt) {
+        let params = opt["params"]
+        let n = Array.len(params)
+        let i = 0
+        while i < n {
+            let p = params[i]
+            if p["grad"] != 0 {
+                TensorOps.free(p["grad"])
+                p["grad"] = 0
+            }
+            i = i + 1
+        }
+        return opt
+    }
+}
+
+class MuonOptimizer {
+    fn create(params, lr, momentum) {
+        let opt = {}
+        opt["type"] = "Muon"
+        opt["params"] = params
+        opt["lr"] = lr
+        opt["momentum"] = momentum
+
+        let n = Array.len(params)
+        let m_list = []
+        let i = 0
+        while i < n {
+            let p = params[i]
+            let p_shape = TensorOps.shape(p["data"])
+            m_list = Array.push(m_list, TensorOps.create(p_shape, 0.0))
+            i = i + 1
+        }
+        opt["m_states"] = m_list
+        return opt
+    }
+
+    fn step(opt) {
+        let lr = opt["lr"]
+        let mom = opt["momentum"]
+        let params = opt["params"]
+        let m_states = opt["m_states"]
+        let n = Array.len(params)
+
+        let i = 0
+        while i < n {
+            let p = params[i]
+            let g = p["grad"]
+            if g != 0 {
+                let theta = p["data"]
+                let old_m = m_states[i]
+
+                let m_scaled = TensorMath.scale(old_m, mom)
+                let new_m = TensorMath.add(m_scaled, g)
+                TensorOps.free(old_m)
+                TensorOps.free(m_scaled)
+                m_states[i] = new_m
+
+                let shp = TensorOps.shape(theta)
+                let k_dim = shp[1]
+                let I = torch.eye(k_dim)
+
+                let X = TensorMath.scale(new_m, 1.0)
+                let step_iter = 0
+                while step_iter < 2 {
+                    let Xt = TensorMath.transpose(X)
+                    let A = TensorMath.matmul(Xt, X)
+                    let A2 = TensorMath.matmul(A, A)
+
+                    let T1 = TensorMath.scale(I, 3.4445)
+                    let T2 = TensorMath.scale(A, 4.7750)
+                    let T3 = TensorMath.scale(A2, 2.0315)
+
+                    let sub_t = TensorMath.sub(T1, T2)
+                    let P = TensorMath.add(sub_t, T3)
+                    let X_next = TensorMath.matmul(X, P)
+
+                    TensorOps.free(Xt)
+                    TensorOps.free(A)
+                    TensorOps.free(A2)
+                    TensorOps.free(T1)
+                    TensorOps.free(T2)
+                    TensorOps.free(T3)
+                    TensorOps.free(sub_t)
+                    TensorOps.free(P)
+                    TensorOps.free(X)
+                    X = X_next
+                    step_iter = step_iter + 1
+                }
+
+                TensorMath.apply_grad(theta, X, lr)
+                TensorOps.free(I)
+                TensorOps.free(X)
+            }
+            i = i + 1
+        }
+        return opt
+    }
+
+    fn zero_grad(opt) {
+        let params = opt["params"]
+        let n = Array.len(params)
+        let i = 0
+        while i < n {
+            let p = params[i]
+            if p["grad"] != 0 {
+                TensorOps.free(p["grad"])
+                p["grad"] = 0
+            }
+            i = i + 1
+        }
+        return opt
+    }
+}
+
+class SGDOptimizer {
+    fn create(params, lr, momentum) {
+        let opt = {}
+        opt["type"] = "SGD"
+        opt["params"] = params
+        opt["lr"] = lr
+        opt["momentum"] = momentum
+
+        let n = Array.len(params)
+        let v_list = []
+        let i = 0
+        while i < n {
+            let p = params[i]
+            let p_shape = TensorOps.shape(p["data"])
+            v_list = Array.push(v_list, TensorOps.create(p_shape, 0.0))
+            i = i + 1
+        }
+        opt["v_states"] = v_list
+        return opt
+    }
+
+    fn step(opt) {
+        let lr = opt["lr"]
+        let mom = opt["momentum"]
+        let params = opt["params"]
+        let v_states = opt["v_states"]
+        let n = Array.len(params)
+
+        let i = 0
+        while i < n {
+            let p = params[i]
+            let g = p["grad"]
+            if g != 0 {
+                let theta = p["data"]
+                let old_v = v_states[i]
+                let v_scaled = TensorMath.scale(old_v, mom)
+                let new_v = TensorMath.add(v_scaled, g)
+                TensorOps.free(old_v)
+                TensorOps.free(v_scaled)
+                v_states[i] = new_v
+
+                TensorMath.apply_grad(theta, new_v, lr)
+            }
+            i = i + 1
+        }
+        return opt
+    }
+
+    fn zero_grad(opt) {
+        let params = opt["params"]
+        let n = Array.len(params)
+        let i = 0
+        while i < n {
+            let p = params[i]
+            if p["grad"] != 0 {
+                TensorOps.free(p["grad"])
+                p["grad"] = 0
+            }
+            i = i + 1
+        }
+        return opt
+    }
+}
+
+// --------------------------------------------------------------------------
+// 13. Learning Rate Schedulers
+// --------------------------------------------------------------------------
+class CosineAnnealingLRScheduler {
+    fn create(optimizer, T_max, eta_min, warmup_steps) {
+        let sched = {}
+        sched["type"] = "CosineAnnealingLR"
+        sched["optimizer"] = optimizer
+        sched["T_max"] = T_max
+        sched["eta_min"] = eta_min
+        sched["warmup_steps"] = warmup_steps
+        sched["current_step"] = 0.0
+        sched["base_lr"] = optimizer["lr"]
+        return sched
+    }
+
+    fn step(sched) {
+        sched["current_step"] = sched["current_step"] + 1.0
+        let s = sched["current_step"]
+        let w = sched["warmup_steps"]
+        let t_max = sched["T_max"]
+        let eta_min = sched["eta_min"]
+        let base_lr = sched["base_lr"]
+
+        let lr = base_lr
+        if s < w {
+            lr = eta_min + (s / w) * (base_lr - eta_min)
+        }
+        let w_minus = w - 0.5
+        if s > w_minus {
+            let p = (s - w) / (t_max - w)
+            if p > 1.0 {
+                p = 1.0
+            }
+            let cos_val = Math.cos(3.141592653589793 * p)
+            lr = eta_min + 0.5 * (base_lr - eta_min) * (1.0 + cos_val)
+        }
+        sched["optimizer"]["lr"] = lr
+        return lr
+    }
+
+    fn get_lr(sched) {
+        return sched["optimizer"]["lr"]
+    }
+}
+
+class StepLRScheduler {
+    fn create(optimizer, step_size, gamma) {
+        let sched = {}
+        sched["type"] = "StepLR"
+        sched["optimizer"] = optimizer
+        sched["step_size"] = step_size
+        sched["gamma"] = gamma
+        sched["current_step"] = 0.0
+        sched["base_lr"] = optimizer["lr"]
+        return sched
+    }
+
+    fn step(sched) {
+        sched["current_step"] = sched["current_step"] + 1.0
+        let s = sched["current_step"]
+        let sz = sched["step_size"]
+        if s % sz == 0.0 {
+            sched["optimizer"]["lr"] = sched["optimizer"]["lr"] * sched["gamma"]
+        }
+        return sched["optimizer"]["lr"]
+    }
+
+    fn get_lr(sched) {
+        return sched["optimizer"]["lr"]
+    }
+}
+
+class LinearLRScheduler {
+    fn create(optimizer, start_factor, end_factor, total_iters) {
+        let sched = {}
+        sched["type"] = "LinearLR"
+        sched["optimizer"] = optimizer
+        sched["start_factor"] = start_factor
+        sched["end_factor"] = end_factor
+        sched["total_iters"] = total_iters
+        sched["current_step"] = 0.0
+        sched["base_lr"] = optimizer["lr"]
+        return sched
+    }
+
+    fn step(sched) {
+        sched["current_step"] = sched["current_step"] + 1.0
+        let s = sched["current_step"]
+        let tot = sched["total_iters"]
+        let frac = s / tot
+        if frac > 1.0 {
+            frac = 1.0
+        }
+        let f = sched["start_factor"] + frac * (sched["end_factor"] - sched["start_factor"])
+        let lr = sched["base_lr"] * f
+        sched["optimizer"]["lr"] = lr
+        return lr
+    }
+
+    fn get_lr(sched) {
+        return sched["optimizer"]["lr"]
+    }
+}
+
+// --------------------------------------------------------------------------
+// 14. Regularization & Mixed Precision Scaling
+// --------------------------------------------------------------------------
+class GradientClipper {
+    fn clip_grad_norm(params, max_norm) {
+        let n = Array.len(params)
+        let total_sq = 0.0
+        let i = 0
+        while i < n {
+            let p = params[i]
+            let g = p["grad"]
+            if g != 0 {
+                let g2 = TensorMath.mul(g, g)
+                let s = TensorMath.sum(g2)
+                total_sq = total_sq + s
+                TensorOps.free(g2)
+            }
+            i = i + 1
+        }
+
+        let total_norm = Math.sqrt(total_sq)
+        if total_norm > max_norm {
+            let scale = max_norm / (total_norm + 0.000001)
+            let j = 0
+            while j < n {
+                let p2 = params[j]
+                let g2 = p2["grad"]
+                if g2 != 0 {
+                    let scaled_g = TensorMath.scale(g2, scale)
+                    TensorOps.free(g2)
+                    p2["grad"] = scaled_g
+                }
+                j = j + 1
+            }
+        }
+        return total_norm
+    }
+}
+
+class DynamicLossScaling {
+    fn create(init_scale, scale_factor, growth_interval) {
+        let scaler = {}
+        scaler["scale"] = init_scale
+        scaler["scale_factor"] = scale_factor
+        scaler["growth_interval"] = growth_interval
+        scaler["step_count"] = 0.0
+        scaler["good_steps"] = 0.0
+        return scaler
+    }
+
+    fn scale_loss(scaler, loss_val) {
+        return loss_val * scaler["scale"]
+    }
+
+    fn unscale_grads(scaler, params) {
+        let inv_scale = 1.0 / scaler["scale"]
+        let n = Array.len(params)
+        let i = 0
+        while i < n {
+            let p = params[i]
+            let g = p["grad"]
+            if g != 0 {
+                let unscaled = TensorMath.scale(g, inv_scale)
+                TensorOps.free(g)
+                p["grad"] = unscaled
+            }
+            i = i + 1
+        }
+        return scaler
+    }
+
+    fn step(scaler, optimizer) {
+        scaler["step_count"] = scaler["step_count"] + 1.0
+        scaler["good_steps"] = scaler["good_steps"] + 1.0
+        let grow_thresh = scaler["growth_interval"] - 0.5
+        if scaler["good_steps"] > grow_thresh {
+            scaler["scale"] = scaler["scale"] * scaler["scale_factor"]
+            scaler["good_steps"] = 0.0
+        }
+        return scaler["scale"]
+    }
+}
+
+// --------------------------------------------------------------------------
+// 15. Callbacks & Metrics
+// --------------------------------------------------------------------------
+class EarlyStoppingCallbackHandler {
+    fn create(patience, min_delta) {
+        let cb = {}
+        cb["type"] = "EarlyStopping"
+        cb["patience"] = patience
+        cb["min_delta"] = min_delta
+        cb["best_loss"] = 99999999.0
+        cb["wait"] = 0.0
+        cb["stopped_epoch"] = 0.0
+        return cb
+    }
+
+    fn on_epoch_end(cb, trainer, epoch, epoch_loss) {
+        let delta = cb["best_loss"] - epoch_loss
+        let min_d = cb["min_delta"]
+        if delta > min_d {
+            cb["best_loss"] = epoch_loss
+            cb["wait"] = 0.0
+        }
+        let min_d_plus = min_d + 0.0000001
+        if delta < min_d_plus {
+            cb["wait"] = cb["wait"] + 1.0
+            let pat_thresh = cb["patience"] - 0.5
+            if cb["wait"] > pat_thresh {
+                trainer["stop_training"] = 1.0
+                cb["stopped_epoch"] = epoch
+            }
+        }
+        return 0
+    }
+}
+
+class ModelCheckpointCallbackHandler {
+    fn create(filepath, monitor, save_best_only) {
+        let cb = {}
+        cb["type"] = "ModelCheckpoint"
+        cb["filepath"] = filepath
+        cb["monitor"] = monitor
+        cb["save_best_only"] = save_best_only
+        cb["best_loss"] = 99999999.0
+        cb["saved_count"] = 0.0
+        return cb
+    }
+
+    fn on_epoch_end(cb, trainer, epoch, epoch_loss) {
+        let is_best = 0.0
+        if epoch_loss < cb["best_loss"] {
+            is_best = 1.0
+            cb["best_loss"] = epoch_loss
+        }
+        if is_best > 0.5 {
+            TrainerEngine.save_checkpoint(trainer, cb["filepath"])
+            cb["saved_count"] = cb["saved_count"] + 1.0
+        }
+        return 0
+    }
+}
+
+class MetricsTrackerStore {
+    fn create() {
+        let m = {}
+        m["type"] = "MetricsTracker"
+        m["loss_history"] = []
+        m["lr_history"] = []
+        m["step_times"] = []
+        return m
+    }
+
+    fn record_step(m, loss_val, lr_val, latency_ms) {
+        m["loss_history"] = Array.push(m["loss_history"], loss_val)
+        m["lr_history"] = Array.push(m["lr_history"], lr_val)
+        m["step_times"] = Array.push(m["step_times"], latency_ms)
+        return m
+    }
+}
+
+// --------------------------------------------------------------------------
+// 16. Declarative Trainer Engine
+// --------------------------------------------------------------------------
+class TrainerEngine {
+    fn create(model, optimizer, loss_fn) {
+        let t = {}
+        t["model"] = model
+        t["optimizer"] = optimizer
+        t["loss_fn"] = loss_fn
+        t["lr_scheduler"] = 0
+        t["loss_scaler"] = 0
+        t["max_grad_norm"] = 0.0
+        t["callbacks"] = []
+        t["metrics"] = MetricsTrackerStore.create()
+        t["stop_training"] = 0.0
+        t["current_epoch"] = 0.0
+        return t
+    }
+
+    fn set_scheduler(trainer, scheduler) {
+        trainer["lr_scheduler"] = scheduler
+        return trainer
+    }
+
+    fn set_loss_scaler(trainer, scaler) {
+        trainer["loss_scaler"] = scaler
+        return trainer
+    }
+
+    fn set_grad_clipping(trainer, max_norm) {
+        trainer["max_grad_norm"] = max_norm
+        return trainer
+    }
+
+    fn add_callback(trainer, cb) {
+        trainer["callbacks"] = Array.push(trainer["callbacks"], cb)
+        return trainer
+    }
+
+    fn train_step(trainer, x, y) {
+        let model = trainer["model"]
+        let opt = trainer["optimizer"]
+        let loss_fn = trainer["loss_fn"]
+
+        // 1. zero_grad
+        let opt_type = opt["type"]
+        if opt_type == "AdamW" { AdamWOptimizer.zero_grad(opt) }
+        if opt_type == "Lion" { LionOptimizer.zero_grad(opt) }
+        if opt_type == "Muon" { MuonOptimizer.zero_grad(opt) }
+        if opt_type == "SGD" { SGDOptimizer.zero_grad(opt) }
+
+        // 2. forward
+        let y_pred = SequentialModel.forward(model, x)
+
+        // 3. loss forward
+        let loss_val = MSELossLayer.forward(loss_fn, y_pred, y)
+
+        // 4. loss backward + model backward
+        let grad_loss = MSELossLayer.backward(loss_fn, y_pred, y)
+        let dx = SequentialModel.backward(model, grad_loss)
+        TensorOps.free(dx)
+
+        // 5. Dynamic loss scaling unscale (if active)
+        if trainer["loss_scaler"] != 0 {
+            DynamicLossScaling.unscale_grads(trainer["loss_scaler"], model["params"])
+        }
+
+        // 6. Gradient clipping (if enabled)
+        if trainer["max_grad_norm"] > 0.0 {
+            GradientClipper.clip_grad_norm(model["params"], trainer["max_grad_norm"])
+        }
+
+        // 7. Optimizer step
+        if opt_type == "AdamW" { AdamWOptimizer.step(opt) }
+        if opt_type == "Lion" { LionOptimizer.step(opt) }
+        if opt_type == "Muon" { MuonOptimizer.step(opt) }
+        if opt_type == "SGD" { SGDOptimizer.step(opt) }
+
+        // 8. Dynamic loss scaling step
+        if trainer["loss_scaler"] != 0 {
+            DynamicLossScaling.step(trainer["loss_scaler"], opt)
+        }
+
+        // 9. LR scheduler step
+        if trainer["lr_scheduler"] != 0 {
+            let s = trainer["lr_scheduler"]
+            let st = s["type"]
+            if st == "CosineAnnealingLR" { CosineAnnealingLRScheduler.step(s) }
+            if st == "StepLR" { StepLRScheduler.step(s) }
+            if st == "LinearLR" { LinearLRScheduler.step(s) }
+        }
+
+        // 10. Record metrics
+        MetricsTrackerStore.record_step(trainer["metrics"], loss_val, opt["lr"], 0.1)
+
+        TensorOps.free(y_pred)
+        return loss_val
+    }
+
+    fn fit(trainer, dataset_x, dataset_y, epochs) {
+        let ep = 0
+        while ep < epochs {
+            if trainer["stop_training"] > 0.5 {
+                return trainer
+            }
+            trainer["current_epoch"] = ep
+
+            let ep_loss = TrainerEngine.train_step(trainer, dataset_x, dataset_y)
+
+            let cbs = trainer["callbacks"]
+            let cb_len = Array.len(cbs)
+            let k = 0
+            while k < cb_len {
+                let cb = cbs[k]
+                let cbt = cb["type"]
+                if cbt == "EarlyStopping" {
+                    EarlyStoppingCallbackHandler.on_epoch_end(cb, trainer, ep, ep_loss)
+                }
+                if cbt == "ModelCheckpoint" {
+                    ModelCheckpointCallbackHandler.on_epoch_end(cb, trainer, ep, ep_loss)
+                }
+                k = k + 1
+            }
+
+            ep = ep + 1
+        }
+        return trainer
+    }
+
+    fn evaluate(trainer, eval_x, eval_y) {
+        let model = trainer["model"]
+        let loss_fn = trainer["loss_fn"]
+        Module.eval(model)
+        let y_pred = SequentialModel.forward(model, eval_x)
+        let loss = MSELossLayer.forward(loss_fn, y_pred, eval_y)
+        Module.train(model)
+        TensorOps.free(y_pred)
+        return loss
+    }
+
+    fn save_checkpoint(trainer, file_path) {
+        let ep_str = to_string(trainer["current_epoch"])
+        let lr_str = to_string(trainer["optimizer"]["lr"])
+        let content = "NEXUS_CHECKPOINT\nepoch=" + ep_str + "\nlr=" + lr_str + "\n"
+        File.write_all(file_path, content)
+        return 1.0
+    }
+
+    fn load_checkpoint(trainer, file_path) {
+        let exists = File.exists(file_path)
+        if exists > 0.5 {
+            let data = File.read_all(file_path)
+            return 1.0
+        }
+        return 0.0
+    }
+}
+
+// --------------------------------------------------------------------------
+// 17. Top-Level stddl Declarative Facade
 // --------------------------------------------------------------------------
 class stddl {
+    // Layers & Modules
     fn Dense(in_features, out_features) {
         return DenseLayer.create(in_features, out_features)
     }
@@ -765,6 +1528,7 @@ class stddl {
         return SequentialModel.create(layers_list)
     }
 
+    // Losses
     fn MSELoss() {
         return MSELossLayer.create()
     }
@@ -783,5 +1547,62 @@ class stddl {
 
     fn SmoothL1Loss(beta) {
         return SmoothL1LossLayer.create(beta)
+    }
+
+    // Optimizers
+    fn AdamW(params, lr, weight_decay) {
+        return AdamWOptimizer.create(params, lr, weight_decay)
+    }
+
+    fn Lion(params, lr, weight_decay) {
+        return LionOptimizer.create(params, lr, weight_decay)
+    }
+
+    fn Muon(params, lr, momentum) {
+        return MuonOptimizer.create(params, lr, momentum)
+    }
+
+    fn SGD(params, lr, momentum) {
+        return SGDOptimizer.create(params, lr, momentum)
+    }
+
+    // Schedulers
+    fn CosineAnnealingLR(optimizer, T_max, eta_min, warmup_steps) {
+        return CosineAnnealingLRScheduler.create(optimizer, T_max, eta_min, warmup_steps)
+    }
+
+    fn StepLR(optimizer, step_size, gamma) {
+        return StepLRScheduler.create(optimizer, step_size, gamma)
+    }
+
+    fn LinearLR(optimizer, start_factor, end_factor, total_iters) {
+        return LinearLRScheduler.create(optimizer, start_factor, end_factor, total_iters)
+    }
+
+    // Regularization & Scaling
+    fn clip_grad_norm(params, max_norm) {
+        return GradientClipper.clip_grad_norm(params, max_norm)
+    }
+
+    fn DynamicLossScaler(init_scale, scale_factor, growth_interval) {
+        return DynamicLossScaling.create(init_scale, scale_factor, growth_interval)
+    }
+
+    // Callbacks & Metrics
+    fn EarlyStopping(patience, min_delta) {
+        return EarlyStoppingCallbackHandler.create(patience, min_delta)
+    }
+
+    fn ModelCheckpoint(filepath, monitor, save_best_only) {
+        return ModelCheckpointCallbackHandler.create(filepath, monitor, save_best_only)
+    }
+
+    fn MetricsTracker() {
+        return MetricsTrackerStore.create()
+    }
+
+    // Declarative Trainer
+    fn Trainer(model, optimizer, loss_fn) {
+        return TrainerEngine.create(model, optimizer, loss_fn)
     }
 }

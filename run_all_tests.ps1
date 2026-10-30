@@ -75,7 +75,9 @@ $tests = @(
     "tests/nx/test_stress_error_recovery.nx",
     "tests/nx/test_input_print.nx",
     "tests/nx/test_input_read.nx",
-    "tests/nx/test_stddl.nx"
+    "tests/nx/test_stddl.nx",
+    "tests/nx/test_stddl_phase2.nx",
+    "tests/nx/test_optional_kwargs.nx"
 )
 
 $passed = 0

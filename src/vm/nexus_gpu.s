@@ -6337,7 +6337,9 @@ asm_gpu_dispatch:
 
     # Download param
     mov rsi, [rbp - 80]
-    cmp dword ptr [rsi + 32], 1
+    mov eax, [rsi + 32]
+    and eax, [rip + gpu_has_cuda]
+    cmp eax, 1
     jne 1f
     mov rcx, [rbp - 96]
     mov rdx, [rsi + 16]
@@ -6352,7 +6354,9 @@ asm_gpu_dispatch:
 2:
     # Download grad
     mov rbx, [rbp - 88]
-    cmp dword ptr [rbx + 32], 1
+    mov eax, [rbx + 32]
+    and eax, [rip + gpu_has_cuda]
+    cmp eax, 1
     jne 3f
     mov rcx, [rbp - 104]
     mov rdx, [rbx + 16]
@@ -6386,7 +6390,9 @@ asm_gpu_dispatch:
 
     # Upload updated param back to VRAM or Host RAM
     mov rsi, [rbp - 80]
-    cmp dword ptr [rsi + 32], 1
+    mov eax, [rsi + 32]
+    and eax, [rip + gpu_has_cuda]
+    cmp eax, 1
     jne 5f
     mov rcx, [rsi + 16]     # dst VRAM
     mov rdx, [rbp - 96]     # src host

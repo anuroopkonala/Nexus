@@ -1,0 +1,164 @@
+// ==============================================================================
+// Nexus Baremetal Core Syntax Test Suite: Optional & Keyword Arguments
+// ==============================================================================
+import stdlib
+
+fn test_assert(cond, test_name) {
+    if (cond) {
+        System.print_str("[PASS] " + test_name)
+    } else {
+        System.print_str("[FAIL] " + test_name)
+    }
+}
+
+// ------------------------------------------------------------------------------
+// 1. Basic Default Arguments (Numeric)
+// ------------------------------------------------------------------------------
+fn add_nums(a, b = 10, c = 100) {
+    return a + b + c
+}
+
+test_assert(add_nums(5) == 115, "add_nums(5) uses both defaults")
+test_assert(add_nums(5, 20) == 125, "add_nums(5, 20) overrides first default")
+test_assert(add_nums(5, 20, 300) == 325, "add_nums(5, 20, 300) overrides all defaults")
+
+// ------------------------------------------------------------------------------
+// 2. Keyword Arguments without Defaults (Reordering & Mixed)
+// ------------------------------------------------------------------------------
+fn sub_three(x, y, z) {
+    return x * 100 + y * 10 + z
+}
+
+test_assert(sub_three(1, 2, 3) == 123, "sub_three positional")
+test_assert(sub_three(z = 3, y = 2, x = 1) == 123, "sub_three full keyword reversed")
+test_assert(sub_three(1, z = 3, y = 2) == 123, "sub_three mixed positional and keyword")
+test_assert(sub_three(y = 20, z = 5, x = 4) == 605, "sub_three arbitrary keyword order")
+
+// ------------------------------------------------------------------------------
+// 3. Combined Optional and Keyword Arguments
+// ------------------------------------------------------------------------------
+fn poly4(a, b = 2, c = 3, d = 4) {
+    return a * 1000 + b * 100 + c * 10 + d
+}
+
+test_assert(poly4(1) == 1234, "poly4 default all optional")
+test_assert(poly4(1, d = 9) == 1239, "poly4 override last optional via kwarg")
+test_assert(poly4(1, c = 8, d = 9) == 1289, "poly4 override c and d via kwarg")
+test_assert(poly4(d = 7, a = 5, b = 6, c = 8) == 5687, "poly4 all kwargs shuffled")
+test_assert(poly4(1, 9, d = 5) == 1935, "poly4 positional + kwarg override")
+
+// ------------------------------------------------------------------------------
+// 4. String Defaults and String Keyword Arguments
+// ------------------------------------------------------------------------------
+fn greet(name, greeting = "Hello", punctuation = "!") {
+    return greeting + ", " + name + punctuation
+}
+
+test_assert(greet("Alice") == "Hello, Alice!", "greet single positional")
+test_assert(greet("Bob", punctuation = "?") == "Hello, Bob?", "greet override punctuation")
+test_assert(greet("Charlie", greeting = "Hi", punctuation = "...") == "Hi, Charlie...", "greet mixed")
+test_assert(greet(punctuation = "!!!", greeting = "Welcome", name = "Dave") == "Welcome, Dave!!!", "greet all kwargs out of order")
+
+// ------------------------------------------------------------------------------
+// 5. Complex Expressions as Default Argument Values
+// ------------------------------------------------------------------------------
+fn compute_expr(x, factor = 2 * 10 + 5, bias = 100 / 4) {
+    return x + factor + bias
+}
+
+test_assert(compute_expr(10) == 60, "compute_expr using arithmetic defaults")
+test_assert(compute_expr(10, bias = 0) == 35, "compute_expr override bias")
+test_assert(compute_expr(10, factor = 1) == 36, "compute_expr override factor")
+
+// ------------------------------------------------------------------------------
+// 6. Data Structure Defaults (Arrays & Dicts)
+// ------------------------------------------------------------------------------
+fn array_sum(arr = [1, 2, 3, 4], scale = 2) {
+    let s = 0
+    let i = 0
+    while (i < len(arr)) {
+        s = s + arr[i] * scale
+        i = i + 1
+    }
+    return s
+}
+
+test_assert(array_sum() == 20, "array_sum default array and scale")
+test_assert(array_sum(scale = 1) == 10, "array_sum override scale kwarg")
+test_assert(array_sum([10, 20], scale = 3) == 90, "array_sum custom array")
+
+fn dict_lookup(key, cfg = {"debug": 1, "port": 8080}) {
+    return cfg[key]
+}
+
+test_assert(dict_lookup("debug") == 1, "dict_lookup default dict 1")
+test_assert(dict_lookup("port") == 8080, "dict_lookup default dict 2")
+test_assert(dict_lookup("port", cfg = {"port": 9000}) == 9000, "dict_lookup custom dict kwarg")
+
+// ------------------------------------------------------------------------------
+// 7. OOP: Class Static Methods with Defaults & Kwargs
+// ------------------------------------------------------------------------------
+class MathOps {
+    fn scale(val, factor = 2, offset = 10) {
+        return val * factor + offset
+    }
+}
+
+test_assert(MathOps.scale(5) == 20, "MathOps.scale defaults")
+test_assert(MathOps.scale(5, offset = 0) == 10, "MathOps.scale override offset")
+test_assert(MathOps.scale(5, factor = 10, offset = 5) == 55, "MathOps.scale override all")
+test_assert(MathOps.scale(offset = 100, val = 3) == 106, "MathOps.scale kwargs reordered")
+
+// ------------------------------------------------------------------------------
+// 8. OOP: Class Instance Methods with Defaults & Kwargs
+// ------------------------------------------------------------------------------
+class Multiplier {
+    fn run(x, mult = 5, addend = 1) {
+        return x * mult + addend
+    }
+}
+
+let m = Multiplier
+test_assert(m.run(4) == 21, "m.run defaults")
+test_assert(m.run(4, addend = 0) == 20, "m.run override addend")
+test_assert(m.run(4, mult = 10, addend = 2) == 42, "m.run override both")
+
+// ------------------------------------------------------------------------------
+// 9. Nested Calls with Keyword Arguments
+// ------------------------------------------------------------------------------
+fn inner_fn(a, b = 5) {
+    return a * 100 + b
+}
+
+fn outer_fn(x = 10, y = 20) {
+    return inner_fn(b = y, a = x)
+}
+
+test_assert(outer_fn() == 1020, "outer_fn nested defaults")
+test_assert(outer_fn(y = 50) == 1050, "outer_fn nested kwarg y")
+test_assert(outer_fn(x = 7, y = 8) == 708, "outer_fn nested both kwargs")
+
+fn mul2(a, b = 2) {
+    return a * b
+}
+
+fn add2(a, b = 1) {
+    return a + b
+}
+
+test_assert(mul2(add2(10, b = 5), b = add2(3)) == 60, "nested compound expressions with kwargs")
+
+// ------------------------------------------------------------------------------
+// 10. Recursion with Optional & Keyword Arguments
+// ------------------------------------------------------------------------------
+fn sum_down(n, step = 1) {
+    if (n <= 0) {
+        return 0
+    }
+    return n + sum_down(n - step, step = step)
+}
+
+test_assert(sum_down(5) == 15, "sum_down(5) step=1 default")
+test_assert(sum_down(6, step = 2) == 12, "sum_down(6, step=2)")
+
+System.print_str("=== All Optional and Keyword Arguments Tests Passed Successfully! ===")
