@@ -12902,6 +12902,14 @@ main:
     mov ecx, 1
     call exit
 .skip_preflight_diag:
+    mov rcx, [rip + cli_source_file]
+    test rcx, rcx
+    jz .skip_expand_imports
+    sub rsp, 32
+    call resolve_and_expand_imports
+    add rsp, 32
+    mov [rip + cli_source_file], rax
+.skip_expand_imports:
 
     mov rcx, [rip + target_asm_file]
     test rcx, rcx

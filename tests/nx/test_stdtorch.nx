@@ -32,12 +32,12 @@ class TensorOps {
         return gpu_dispatch(14.0, [h, new_shape])
     }
 
-    fn get(h, r, c) {
-        return gpu_dispatch(16.0, [h, r, c])
+    fn get(h, row, col) {
+        return gpu_dispatch(16.0, [h, row, col])
     }
 
-    fn set(h, r, c, val) {
-        return gpu_dispatch(60.0, [h, r, c, val])
+    fn set(h, row, col, val) {
+        return gpu_dispatch(60.0, [h, row, col, val])
     }
 
     fn cuda(h) {

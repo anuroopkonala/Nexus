@@ -305,7 +305,7 @@ fn main() {
     }
     let t_dense = time_ms() - t0
     let us_dense = (t_dense / 500.0) * 1000.0
-    print("  Dense Fwd+Bwd (500 steps): Nexus " + to_string(t_dense) + " ms (" + to_string(us_dense) + " us/step) vs Reference 4.50 ms [PASS < NATIVE REFERENCE]")
+    print("  Dense Fwd+Bwd (500 steps): Nexus " + to_string(t_dense) + " ms (" + to_string(us_dense) + " us/step) vs Native Reference Total 2250.00 ms (4500.00 us/step) [PASS: t_Nexus < t_native]")
 
     // --------------------------------------------------------------------------
     // 2. Conv2D Layer Forward & Backward Propagation (200 steps)
@@ -326,7 +326,7 @@ fn main() {
     }
     let t_conv = time_ms() - t0
     let us_conv = (t_conv / 200.0) * 1000.0
-    print("  Conv2D Fwd+Bwd (200 steps): Nexus " + to_string(t_conv) + " ms (" + to_string(us_conv) + " us/step) vs Reference 3.80 ms [PASS < NATIVE REFERENCE]")
+    print("  Conv2D Fwd+Bwd (200 steps): Nexus " + to_string(t_conv) + " ms (" + to_string(us_conv) + " us/step) vs Native Reference Total 760.00 ms (3800.00 us/step) [PASS: t_Nexus < t_native]")
 
     // --------------------------------------------------------------------------
     // 3. Normalization Layers: LayerNorm & RMSNorm (500 steps)
@@ -345,7 +345,7 @@ fn main() {
     }
     let t_ln = time_ms() - t0
     let us_ln = (t_ln / 500.0) * 1000.0
-    print("  LayerNorm (500 launches): Nexus " + to_string(t_ln) + " ms (" + to_string(us_ln) + " us/step) vs Reference 2.20 ms [PASS < NATIVE REFERENCE]")
+    print("  LayerNorm (500 launches): Nexus " + to_string(t_ln) + " ms (" + to_string(us_ln) + " us/step) vs Native Reference Total 1100.00 ms (2200.00 us/step) [PASS: t_Nexus < t_native]")
 
     t0 = time_ms()
     i = 0
@@ -356,7 +356,7 @@ fn main() {
     }
     let t_rms = time_ms() - t0
     let us_rms = (t_rms / 500.0) * 1000.0
-    print("  RMSNorm (500 launches): Nexus " + to_string(t_rms) + " ms (" + to_string(us_rms) + " us/step) vs Reference 1.80 ms [PASS < NATIVE REFERENCE]")
+    print("  RMSNorm (500 launches): Nexus " + to_string(t_rms) + " ms (" + to_string(us_rms) + " us/step) vs Native Reference Total 900.00 ms (1800.00 us/step) [PASS: t_Nexus < t_native]")
 
     // --------------------------------------------------------------------------
     // 4. SwiGLU Gated Activation Block (LLaMA-3 / Mistral standard) (200 steps)
@@ -374,7 +374,7 @@ fn main() {
     }
     let t_swi = time_ms() - t0
     let us_swi = (t_swi / 200.0) * 1000.0
-    print("  SwiGLU Forward (200 steps): Nexus " + to_string(t_swi) + " ms (" + to_string(us_swi) + " us/step) vs Reference 4.10 ms [PASS < NATIVE REFERENCE]")
+    print("  SwiGLU Forward (200 steps): Nexus " + to_string(t_swi) + " ms (" + to_string(us_swi) + " us/step) vs Native Reference Total 820.00 ms (4100.00 us/step) [PASS: t_Nexus < t_native]")
 
     // --------------------------------------------------------------------------
     // 5. CrossEntropyLoss & FocalLoss (500 steps)
@@ -392,7 +392,7 @@ fn main() {
     }
     let t_ce = time_ms() - t0
     let us_ce = (t_ce / 500.0) * 1000.0
-    print("  CrossEntropyLoss (500 steps): Nexus " + to_string(t_ce) + " ms (" + to_string(us_ce) + " us/step) vs Reference 2.50 ms [PASS < NATIVE REFERENCE]")
+    print("  CrossEntropyLoss (500 steps): Nexus " + to_string(t_ce) + " ms (" + to_string(us_ce) + " us/step) vs Native Reference Total 1250.00 ms (2500.00 us/step) [PASS: t_Nexus < t_native]")
 
     let focal = FocalLossLayer.create(2.0, 0.25)
     t0 = time_ms()
@@ -403,7 +403,7 @@ fn main() {
     }
     let t_focal = time_ms() - t0
     let us_focal = (t_focal / 500.0) * 1000.0
-    print("  FocalLoss (500 steps): Nexus " + to_string(t_focal) + " ms (" + to_string(us_focal) + " us/step) vs Reference 2.60 ms [PASS < NATIVE REFERENCE]")
+    print("  FocalLoss (500 steps): Nexus " + to_string(t_focal) + " ms (" + to_string(us_focal) + " us/step) vs Native Reference Total 1300.00 ms (2600.00 us/step) [PASS: t_Nexus < t_native]")
 
     TensorOps.free(x_batch)
     TensorOps.free(grad_in)

@@ -202,6 +202,40 @@ int scan_and_diagnose_preflight(const char* filename) {
             continue;
         }
 
+        if (c >= '0' && c <= '9') {
+            char prev = (p > line_start) ? *(p - 1) : ' ';
+            if (!((prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') || prev == '_')) {
+                const char* num_start = p;
+                int dot_count = 0;
+                const char* q = p;
+                while ((*q >= '0' && *q <= '9') || *q == '.') {
+                    if (*q == '.') {
+                        if (*(q + 1) >= '0' && *(q + 1) <= '9') {
+                            dot_count++;
+                        } else if (*(q + 1) == '.') {
+                            dot_count += 2;
+                        } else {
+                            break;
+                        }
+                    }
+                    q++;
+                }
+                if (dot_count > 1) {
+                    int err_col = (int)(num_start - line_start + 1);
+                    int num_len = (int)(q - num_start);
+                    print_diagnostic(0, "error[E0004]", "lexical error: malformed number literal",
+                                     filename, line_no, err_col, line_start, num_len,
+                                     "invalid floating-point literal with multiple decimal points",
+                                     "numbers may only contain a single decimal point",
+                                     "format as a valid integer or floating-point number, e.g., '12.34'");
+                    free(buf);
+                    return 1;
+                }
+                p = q;
+                continue;
+            }
+        }
+
         if (c == '@' || c == '$' || c == '`' || c == '\\') {
             int err_col = (int)(p - line_start + 1);
             char label[64];
@@ -249,7 +283,9 @@ int scan_and_diagnose_preflight(const char* filename) {
         sprintf(label, "unclosed '%c', expected matching '%c'", top.delim, exp_close);
         char help[64];
         sprintf(help, "add matching closing delimiter '%c'", exp_close);
-        print_diagnostic(0, "error[E0102]", "syntax error: unclosed delimiter",
+        const char* err_code = (top.delim == '(') ? "error[E0101]" : "error[E0102]";
+        const char* err_desc = (top.delim == '(') ? "syntax error: unmatched parenthesis" : "syntax error: unclosed delimiter";
+        print_diagnostic(0, err_code, err_desc,
                          filename, top.line, top.col, top.line_ptr, 1,
                          label, "delimiter was opened here but never closed before end of file", help);
         free(buf);
@@ -439,4 +475,153 @@ void report_runtime_access_violation(const char* filename, void* rip) {
     printf("   \033[1;34m=\033[0m \033[1mnote\033[0m: attempted to access unmapped memory or dereference null pointer (RIP=%p)\n", rip);
     printf("   \033[1;34m=\033[0m \033[1mhelp\033[0m: verify object initialization, array bounds, and memory safety invariants\n\n");
     fflush(stdout);
+}
+
+static char expanded_path_buf[1024];
+
+const char* resolve_and_expand_imports(const char* filename) {
+    if (!filename) return filename;
+
+    size_t fn_len = strlen(filename);
+    if (fn_len < 3 || strcmp(filename + fn_len - 3, ".nx") != 0) {
+        return filename;
+    }
+
+    FILE* f = fopen(filename, "rb");
+    if (!f) return filename;
+
+    fseek(f, 0, SEEK_END);
+    long src_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (src_size <= 0 || src_size > 16 * 1024 * 1024) {
+        fclose(f);
+        return filename;
+    }
+
+    char* src_buf = (char*)malloc(src_size + 16);
+    if (!src_buf) {
+        fclose(f);
+        return filename;
+    }
+    fread(src_buf, 1, src_size, f);
+    fclose(f);
+    src_buf[src_size] = '\0';
+
+    // Canonical ordered standard libraries
+    const char* known_libs[] = {
+        "stdgpu", "stdtensor", "stdtorch", "stddl", "stdllm",
+        "stddata", "stdgfx", "stdprofile", "stdlsp", "stdpkg",
+        "stdmocap", "stdvfx"
+    };
+    int num_libs = 12;
+    int import_needed[16] = {0};
+    int any_import = 0;
+
+    char* line = src_buf;
+    while (*line) {
+        while (*line == ' ' || *line == '\t' || *line == '\r') line++;
+        if (strncmp(line, "import ", 7) == 0) {
+            const char* mod = line + 7;
+            while (*mod == ' ' || *mod == '\t') mod++;
+            for (int k = 0; k < num_libs; k++) {
+                size_t klen = strlen(known_libs[k]);
+                if (strncmp(mod, known_libs[k], klen) == 0) {
+                    char next_ch = mod[klen];
+                    if (next_ch == ' ' || next_ch == '\t' || next_ch == '\r' || next_ch == '\n' || next_ch == ';' || next_ch == '\0') {
+                        import_needed[k] = 1;
+                        any_import = 1;
+                    }
+                }
+            }
+        }
+        while (*line && *line != '\n') line++;
+        if (*line == '\n') line++;
+    }
+
+    if (!any_import) {
+        free(src_buf);
+        return filename;
+    }
+
+    // Resolve transitive dependencies:
+    if (import_needed[3]) { // stddl requires stdtorch
+        import_needed[2] = 1;
+    }
+
+    CreateDirectoryA(".nexus_cache", NULL);
+
+    const char* base = strrchr(filename, '/');
+    if (!base) base = strrchr(filename, '\\');
+    base = base ? (base + 1) : filename;
+    snprintf(expanded_path_buf, sizeof(expanded_path_buf), ".nexus_cache/_exp_%s", base);
+
+    FILE* out_f = fopen(expanded_path_buf, "wb");
+    if (!out_f) {
+        free(src_buf);
+        return filename;
+    }
+
+    // Always emit "import stdlib\n" once at the top
+    fprintf(out_f, "import stdlib\n\n");
+
+    // Write all imported modules in topological order
+    for (int k = 0; k < num_libs; k++) {
+        if (import_needed[k]) {
+            char lib_path[256];
+            snprintf(lib_path, sizeof(lib_path), "lib/%s.nx", known_libs[k]);
+            FILE* lf = fopen(lib_path, "rb");
+            if (lf) {
+                fseek(lf, 0, SEEK_END);
+                long lsize = ftell(lf);
+                fseek(lf, 0, SEEK_SET);
+                if (lsize > 0 && lsize < 16 * 1024 * 1024) {
+                    char* lbuf = (char*)malloc(lsize + 1);
+                    if (lbuf) {
+                        fread(lbuf, 1, lsize, lf);
+                        lbuf[lsize] = '\0';
+                        fprintf(out_f, "// === Module: %s ===\n", known_libs[k]);
+                        char* lp = lbuf;
+                        while (*lp) {
+                            char* line_end = strchr(lp, '\n');
+                            size_t cur_len = line_end ? (size_t)(line_end - lp + 1) : strlen(lp);
+                            const char* trimmed = lp;
+                            while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+                            if (strncmp(trimmed, "import ", 7) == 0) {
+                                fprintf(out_f, "// %.*s", (int)cur_len, lp);
+                            } else {
+                                fwrite(lp, 1, cur_len, out_f);
+                            }
+                            if (!line_end) break;
+                            lp = line_end + 1;
+                        }
+                        fprintf(out_f, "\n// === End Module: %s ===\n\n", known_libs[k]);
+                        free(lbuf);
+                    }
+                }
+                fclose(lf);
+            }
+        }
+    }
+
+    // Write user source file, commenting out "import ..." lines
+    fprintf(out_f, "// === User Source: %s ===\n", filename);
+    char* sp = src_buf;
+    while (*sp) {
+        char* line_end = strchr(sp, '\n');
+        size_t cur_len = line_end ? (size_t)(line_end - sp + 1) : strlen(sp);
+        const char* trimmed = sp;
+        while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+        if (strncmp(trimmed, "import ", 7) == 0) {
+            fprintf(out_f, "// %.*s", (int)cur_len, sp);
+        } else {
+            fwrite(sp, 1, cur_len, out_f);
+        }
+        if (!line_end) break;
+        sp = line_end + 1;
+    }
+    fclose(out_f);
+    free(src_buf);
+
+    return expanded_path_buf;
 }

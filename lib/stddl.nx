@@ -74,6 +74,7 @@ class DenseLayer {
         layer["in_features"] = in_features
         layer["out_features"] = out_features
         layer["weights"] = w
+        layer["weights_t"] = TensorMath.transpose(w)
         layer["bias"] = b
         layer["grad_w"] = 0
         layer["grad_b"] = 0
@@ -98,6 +99,7 @@ class DenseLayer {
         layer["last_x"] = x
         let xw = TensorMath.matmul(x, layer["weights"])
         let out = TensorMath.add(xw, layer["bias"])
+        TensorOps.free(xw)
         return out
     }
 
@@ -114,8 +116,8 @@ class DenseLayer {
         let p_b = params[1]
         p_b["grad"] = grad_output
 
-        let wt = TensorMath.transpose(layer["weights"])
-        let dx = TensorMath.matmul(grad_output, wt)
+        let dx = TensorMath.matmul(grad_output, layer["weights_t"])
+        TensorOps.free(xt)
         return dx
     }
 }
@@ -138,6 +140,7 @@ class Conv2DLayer {
         layer["stride"] = stride
         layer["padding"] = padding
         layer["weights"] = w
+        layer["weights_t"] = TensorMath.transpose(w)
         layer["bias"] = b
         layer["grad_w"] = 0
         layer["grad_b"] = 0
@@ -161,6 +164,7 @@ class Conv2DLayer {
         layer["last_x"] = x
         let xw = TensorMath.matmul(x, layer["weights"])
         let out = TensorMath.add(xw, layer["bias"])
+        TensorOps.free(xw)
         return out
     }
 
@@ -177,8 +181,8 @@ class Conv2DLayer {
         let p_b = params[1]
         p_b["grad"] = grad_output
 
-        let wt = TensorMath.transpose(layer["weights"])
-        let dx = TensorMath.matmul(grad_output, wt)
+        let dx = TensorMath.matmul(grad_output, layer["weights_t"])
+        TensorOps.free(xt)
         return dx
     }
 }
@@ -330,6 +334,9 @@ class ResidualLayer {
         if t == "Conv2D" { fx = Conv2DLayer.forward(sub, x) }
         if t == "Sequential" { fx = SequentialModel.forward(sub, x) }
         let out = TensorMath.add(x, fx)
+        if fx != x {
+            TensorOps.free(fx)
+        }
         return out
     }
 
@@ -342,6 +349,9 @@ class ResidualLayer {
         if t == "Conv2D" { df = Conv2DLayer.backward(sub, grad_output) }
         if t == "Sequential" { df = SequentialModel.backward(sub, grad_output) }
         let dx = TensorMath.add(grad_output, df)
+        if df != grad_output {
+            TensorOps.free(df)
+        }
         return dx
     }
 }
@@ -649,12 +659,16 @@ class CrossEntropyLossLayer {
         let diff = TensorMath.sub(probs, targets)
         let sq = TensorMath.mul(diff, diff)
         let loss = TensorMath.mean(sq)
+        TensorOps.free(probs)
+        TensorOps.free(diff)
+        TensorOps.free(sq)
         return loss
     }
 
     fn backward(loss_obj, logits, targets) {
         let probs = TensorMath.softmax(logits)
         let grad = TensorMath.sub(probs, targets)
+        TensorOps.free(probs)
         return grad
     }
 }

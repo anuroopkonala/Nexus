@@ -181,14 +181,18 @@ gpu_device_name:    .space 256
 # [32]: is_device (quad: 1=CUDA, 0=Host)
 # [40]: dim0 (long), dim1 (long)
 .align 16
-gpu_next_handle_id: .quad 1
-gpu_handle_table:   .space 786432   # 16384 * 48 bytes
+gpu_alloc_driver_calls: .quad 0
+gpu_next_handle_id:   .quad 1
+gpu_handle_table:     .space 786432   # 16384 * 48 bytes
+gpu_handle_free_init: .quad 0
+gpu_handle_free_top:  .quad 0
+gpu_handle_free_stack:.space 131072   # 16384 * 8 bytes
 
 # --- Pure Assembly Fast VRAM Slab Allocator Cache (512 slots) ---
 .align 16
 gpu_vram_pool_count:  .quad 0
 # Each slot: [0..7]: d_ptr (64-bit), [8..15]: capacity_bytes (64-bit)
-gpu_vram_pool:        .space 8192  # 512 slots * 16 bytes
+gpu_vram_pool:        .space 131072 # 8192 slots * 16 bytes
 
 # --- Embedded PTX Assembly Compute Kernels ---
 .align 16
@@ -241,6 +245,20 @@ asm_gpu_init:
 
     mov dword ptr [rip + gpu_is_inited], 1
     mov dword ptr [rip + gpu_has_cuda], 0
+
+    # Initialize handle table free stack (16383 down to 0)
+    lea rdi, [rip + gpu_handle_free_stack]
+    xor ecx, ecx
+.init_handle_stack_lp:
+    cmp ecx, 16384
+    jge .init_handle_stack_dn
+    mov eax, 16383
+    sub eax, ecx
+    mov [rdi + rcx * 8], rax
+    inc ecx
+    jmp .init_handle_stack_lp
+.init_handle_stack_dn:
+    mov qword ptr [rip + gpu_handle_free_top], 16384
 
     # LoadLibraryA("nvcuda.dll")
     lea rcx, [rip + gpu_str_nvcuda]
@@ -744,23 +762,24 @@ asm_gpu_alloc_vram:
     test rsi, rsi
     jz .slab_alloc_fresh
 
-    # Search slab pool for best fit
+    # Search for EXACT match (capacity == rbx) LIFO
     lea rdi, [rip + gpu_vram_pool]
-    xor ecx, ecx            # i = 0
-.slab_search_lp:
-    cmp rcx, rsi
-    jge .slab_alloc_fresh
-    mov r8, [rdi + 8]       # slot capacity
+    mov rcx, rsi
+.slab_search_exact:
+    test rcx, rcx
+    jz .slab_alloc_fresh
+    dec rcx
+    mov r10, rcx
+    shl r10, 4
+    lea rdx, [rdi + r10]
+    mov r8, [rdx + 8]       # slot capacity
     cmp r8, rbx
-    jb .slab_search_next
-    # Allow capacity up to 2x rbx
-    mov r9, rbx
-    shl r9, 1
-    cmp r8, r9
-    ja .slab_search_next
+    jne .slab_search_exact
+    jmp .slab_match_found
 
-    # Match found in current slot rdi!
-    mov rax, [rdi]          # cached d_ptr
+.slab_match_found:
+    # Match found in slot rdx!
+    mov rax, [rdx]          # cached d_ptr
     mov [r12], rax          # *out_ptr = d_ptr
 
     # Remove slot rcx: replace with last slot [rsi - 1]
@@ -770,23 +789,18 @@ asm_gpu_alloc_vram:
     je .slab_search_hit
     mov r10, rsi
     shl r10, 4
-    lea rdx, [rip + gpu_vram_pool]
-    add rdx, r10            # rdx = &gpu_vram_pool[rsi]
-    mov r10, [rdx]
-    mov r11, [rdx + 8]
-    mov [rdi], r10
-    mov [rdi + 8], r11
+    lea r11, [rdi + r10]
+    mov r10, [r11]
+    mov r11, [r11 + 8]
+    mov [rdx], r10
+    mov [rdx + 8], r11
 .slab_search_hit:
     xor eax, eax                   # CUDA_SUCCESS = 0
     jmp .slab_alloc_done
 
-.slab_search_next:
-    add rdi, 16
-    inc rcx
-    jmp .slab_search_lp
-
 .slab_alloc_fresh:
     # Delegate to driver cuMemAlloc
+    inc qword ptr [rip + gpu_alloc_driver_calls]
     mov rcx, r12
     mov rdx, rbx
     call [rip + gpu_p_cuMemAlloc]
@@ -823,9 +837,9 @@ asm_gpu_free_vram:
     add rsi, 255
     and rsi, -256
 
-    # If count < 512 and size > 0, store in slab pool
+    # If count < 8192 and size > 0, store in slab pool
     mov rax, [rip + gpu_vram_pool_count]
-    cmp rax, 512
+    cmp rax, 8192
     jge .slab_free_driver
     test rsi, rsi
     jz .slab_free_driver
@@ -867,23 +881,52 @@ asm_gpu_register_handle:
     push rbx
     push rsi
     push rdi
+    push r12
+    push r13
 
-    # Find free slot in gpu_handle_table (16384 entries x 48 bytes)
+    # Safety: ensure free stack initialized if called before asm_gpu_init
+    mov rax, [rip + gpu_handle_free_top]
+    test rax, rax
+    jnz .slot_alloc_from_stack
+
+    # Lazy fallback init if ever needed:
+    mov [rbp + 16], rcx
+    mov [rbp + 24], rdx
+    mov [rbp + 32], r8
+    mov [rbp + 40], r9
+    lea rdi, [rip + gpu_handle_free_stack]
+    xor ecx, ecx
+.lazy_init_free_lp:
+    cmp ecx, 16384
+    jge .lazy_init_free_dn
+    mov eax, 16383
+    sub eax, ecx
+    mov [rdi + rcx * 8], rax
+    inc ecx
+    jmp .lazy_init_free_lp
+.lazy_init_free_dn:
+    mov qword ptr [rip + gpu_handle_free_top], 16384
+    mov rcx, [rbp + 16]
+    mov rdx, [rbp + 24]
+    mov r8,  [rbp + 32]
+    mov r9,  [rbp + 40]
+
+.slot_alloc_from_stack:
+    mov rax, [rip + gpu_handle_free_top]
+    test rax, rax
+    jz .reg_table_full
+
+    dec rax
+    mov [rip + gpu_handle_free_top], rax
+    lea r10, [rip + gpu_handle_free_stack]
+    mov r11, [r10 + rax * 8]      # r11 = slot_idx (0..16383)
+
+    imul r10, r11, 48
     lea rdi, [rip + gpu_handle_table]
-    mov eax, 16384
-.find_slot:
-    cmp qword ptr [rdi], 0
-    je .found_slot
-    add rdi, 48
-    dec eax
-    jnz .find_slot
-    # Table full
-    xor eax, eax
-    jmp .reg_done
+    add rdi, r10                  # rdi = &gpu_handle_table[slot_idx]
 
-.found_slot:
-    mov rax, [rip + gpu_next_handle_id]
-    inc qword ptr [rip + gpu_next_handle_id]
+    # handle_id = slot_idx + 1
+    lea rax, [r11 + 1]
     mov [rdi], rax          # handle_id
     mov [rdi + 8], rcx      # type
     mov [rdi + 16], rdx     # d_ptr
@@ -894,7 +937,15 @@ asm_gpu_register_handle:
     mov r11d, [rbp + 56]
     mov [rdi + 44], r11d    # dim1
 
+    # rax is handle_id
+    jmp .reg_done
+
+.reg_table_full:
+    xor eax, eax
+
 .reg_done:
+    pop r13
+    pop r12
     pop rdi
     pop rsi
     pop rbx
@@ -905,27 +956,17 @@ asm_gpu_register_handle:
 asm_gpu_lookup_handle:
     test rcx, rcx
     jz .lookup_null
-    # Fast path: O(1) direct index check
-    cmp rcx, 16384
-    ja .lookup_full_scan
-    lea rdx, [rcx - 1]
-    imul rdx, 48
+    mov rax, rcx
+    dec rax                      # slot_idx = handle_id - 1
+    cmp rax, 16384
+    jae .lookup_null
+    imul rdx, rax, 48
     lea rax, [rip + gpu_handle_table]
     add rax, rdx
     cmp [rax], rcx
     je .lookup_found
-.lookup_full_scan:
-    lea rax, [rip + gpu_handle_table]
-    mov edx, 16384
-.lookup_loop:
-    cmp [rax], rcx
-    je .lookup_found
-    add rax, 48
-    dec edx
-    jnz .lookup_loop
 .lookup_null:
     xor eax, eax
-    ret
 .lookup_found:
     ret
 
@@ -934,7 +975,11 @@ asm_gpu_free_handle:
     push rbp
     mov rbp, rsp
     push rbx
+    push rsi
+    push rdi
     sub rsp, 40
+
+    mov rsi, rcx                 # rsi = handle_id
     call asm_gpu_lookup_handle
     test rax, rax
     jz .free_fail
@@ -980,6 +1025,10 @@ asm_gpu_free_handle:
     call free
 
 .free_clear:
+    # Compute slot_idx from handle_id (rsi - 1)
+    mov rax, rsi
+    dec rax                      # slot_idx = handle_id - 1
+
     # Clear entry
     mov qword ptr [rbx], 0
     mov qword ptr [rbx + 8], 0
@@ -987,14 +1036,28 @@ asm_gpu_free_handle:
     mov qword ptr [rbx + 24], 0
     mov qword ptr [rbx + 32], 0
     mov qword ptr [rbx + 40], 0
+
+    # Push slot_idx back onto gpu_handle_free_stack
+    mov rdx, [rip + gpu_handle_free_top]
+    cmp rdx, 16384
+    jae 1f
+    lea r10, [rip + gpu_handle_free_stack]
+    mov [r10 + rdx * 8], rax
+    inc qword ptr [rip + gpu_handle_free_top]
+1:
     mov eax, 1
     add rsp, 40
+    pop rdi
+    pop rsi
     pop rbx
     pop rbp
     ret
+
 .free_fail:
     xor eax, eax
     add rsp, 40
+    pop rdi
+    pop rsi
     pop rbx
     pop rbp
     ret
@@ -1384,6 +1447,14 @@ asm_gpu_dispatch:
 
 .check_op_6:
     # --------------------------------------------------------------------------
+    # OP 99: GET_DRIVER_ALLOC_COUNT
+    cmp r14, 99
+    jne 99f
+    mov rax, [rip + gpu_alloc_driver_calls]
+    cvtsi2sd xmm0, rax
+    movsd [r13 + r12 * 8], xmm0
+    jmp .dispatch_done
+99:
     # OP 6: GPU_SYNC
     # --------------------------------------------------------------------------
     cmp r14, 6

@@ -25,3 +25,9 @@ Thumbs.db
 
 # Benchmark XML results (regenerable)
 benchmarks/benchmark_results.xml
+
+# Cache
+.nexus_cache/
+
+# Root diagnostic test scripts
+/test_*.nx
