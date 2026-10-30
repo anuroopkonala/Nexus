@@ -79,6 +79,7 @@ $tests = @(
     "tests/nx/test_stddl_phase2.nx",
     "tests/nx/test_stdllm.nx",
     "tests/nx/test_stdllm_phase4.nx",
+    "tests/nx/test_stdllm_phase5.nx",
     "tests/nx/test_optional_kwargs.nx",
     "tests/nx/test_stdgfx.nx",
     "tests/nx/test_stdvfx.nx",

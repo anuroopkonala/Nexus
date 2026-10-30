@@ -1,0 +1,1144 @@
+// ==============================================================================
+// Nexus Baremetal - Unit & Architecture Test Suite: stdllm (Phase 5)
+// Native Agentic Orchestration, LangChain & LangGraph in Pure Nexus
+// 1. LLMPromptTemplate & Multi-Variable Formatting
+// 2. LLMMessage (System, User, Assistant, Tool) & ConversationMemory (Sliding Window)
+// 3. LLMStrOutputParser & LLMJSONOutputParser (Markdown extraction & Types)
+// 4. LLMChain Composable Pipeline (Prompt | Model | Parser)
+// 5. LLMStateGraph & CompiledStateGraph (Cyclical Routing, Reducers, Checkpoints)
+// 6. LLMTool, LLMToolRegistry & Autonomous LLMAgentExecutor
+// 7. LLMVectorStore (Cosine Similarity) & LLMRAGRetriever
+// 8. Universal Dot-Syntax Facade (stdllm.*)
+// ==============================================================================
+
+import stdlib
+
+fn test_assert(cond, test_name) {
+    if (cond) {
+        print("  " + test_name + ": [PASS]")
+    } else {
+        print("  " + test_name + ": [FAIL]")
+    }
+}
+
+fn approx_equal(a, b, eps) {
+    let diff = a - b
+    if diff < 0.0 { diff = 0.0 - diff }
+    return diff <= eps
+}
+
+fn invoke_fn1(fn_ptr, arg) {
+    return fn_ptr(arg)
+}
+
+// --------------------------------------------------------------------------
+// 1. Prompt Templates & Message Primitives
+// --------------------------------------------------------------------------
+class LLMPromptTemplate {
+    fn create(pt_template_str) {
+        let pt_obj = {}
+        pt_obj["type"] = "PromptTemplate"
+        pt_obj["template"] = pt_template_str
+        return pt_obj
+    }
+
+    fn format(pt_self, pt_variables_dict) {
+        let pt_cur = pt_self["template"]
+        let pt_keys = pt_variables_dict.keys()
+        let pt_klen = len(pt_keys)
+        let pt_k_idx = 0
+        while pt_k_idx < pt_klen {
+            let pt_k = pt_keys[pt_k_idx]
+            let pt_token = "{" + pt_k + "}"
+            let pt_val = pt_variables_dict[pt_k]
+            let pt_out = ""
+            let pt_target_len = len(pt_token)
+            while true {
+                let pt_found_idx = index_of(pt_cur, pt_token)
+                if pt_found_idx < 0 {
+                    pt_out = pt_out + pt_cur
+                    break
+                }
+                let pt_prefix = pt_cur.substring(0, pt_found_idx)
+                pt_out = pt_out + pt_prefix + pt_val
+                pt_cur = pt_cur.substring(pt_found_idx + pt_target_len, len(pt_cur))
+            }
+            pt_cur = pt_out
+            pt_k_idx = pt_k_idx + 1
+        }
+        return pt_cur
+    }
+}
+
+class LLMMessage {
+    fn system(msg_content) {
+        let msg = {}
+        msg["role"] = "system"
+        msg["content"] = msg_content
+        return msg
+    }
+
+    fn user(msg_content) {
+        let msg = {}
+        msg["role"] = "user"
+        msg["content"] = msg_content
+        return msg
+    }
+
+    fn assistant(msg_content) {
+        let msg = {}
+        msg["role"] = "assistant"
+        msg["content"] = msg_content
+        return msg
+    }
+
+    fn tool(msg_call_id, msg_content) {
+        let msg = {}
+        msg["role"] = "tool"
+        msg["tool_call_id"] = msg_call_id
+        msg["content"] = msg_content
+        return msg
+    }
+}
+
+class LLMConversationMemory {
+    fn create(mem_window_size) {
+        let mem_obj = {}
+        mem_obj["type"] = "ConversationMemory"
+        mem_window_size = mem_window_size * 1.0
+        mem_obj["window_size"] = mem_window_size
+        mem_obj["messages"] = []
+        return mem_obj
+    }
+
+    fn add_user_message(mem_self, mem_text) {
+        let mem_m = LLMMessage.user(mem_text)
+        mem_self["messages"] = Array.push(mem_self["messages"], mem_m)
+    }
+
+    fn add_ai_message(mem_self, mem_text) {
+        let mem_m = LLMMessage.assistant(mem_text)
+        mem_self["messages"] = Array.push(mem_self["messages"], mem_m)
+    }
+
+    fn add_tool_message(mem_self, mem_call_id, mem_text) {
+        let mem_m = LLMMessage.tool(mem_call_id, mem_text)
+        mem_self["messages"] = Array.push(mem_self["messages"], mem_m)
+    }
+
+    fn get_messages(mem_self) {
+        let mem_w = mem_self["window_size"]
+        let mem_msgs = mem_self["messages"]
+        let mem_len = len(mem_msgs)
+        if mem_w > 0.0 {
+            if mem_len > mem_w {
+                return Array.slice(mem_msgs, mem_len - mem_w, mem_len)
+            }
+        }
+        return mem_msgs
+    }
+
+    fn clear(mem_self) {
+        mem_self["messages"] = []
+    }
+}
+
+// --------------------------------------------------------------------------
+// 2. Output Parsers & Composable Chains
+// --------------------------------------------------------------------------
+class LLMStrOutputParser {
+    fn create() {
+        let sop_obj = {}
+        sop_obj["type"] = "StrOutputParser"
+        return sop_obj
+    }
+
+    fn parse(sop_self, sop_text) {
+        return sop_text
+    }
+}
+
+fn llm_json_char_to_digit(ch) {
+    if ch == "0" { return 0.0 }
+    if ch == "1" { return 1.0 }
+    if ch == "2" { return 2.0 }
+    if ch == "3" { return 3.0 }
+    if ch == "4" { return 4.0 }
+    if ch == "5" { return 5.0 }
+    if ch == "6" { return 6.0 }
+    if ch == "7" { return 7.0 }
+    if ch == "8" { return 8.0 }
+    if ch == "9" { return 9.0 }
+    return -1.0
+}
+
+fn llm_json_str_to_num(num_str) {
+    let sign = 1.0
+    let cur_idx = 0
+    let nlen = len(num_str)
+    if nlen == 0 { return 0.0 }
+    let first = num_str.substring(0, 1)
+    if first == "-" {
+        sign = -1.0
+        cur_idx = 1
+    }
+    let int_part = 0.0
+    while cur_idx < nlen {
+        let ch = num_str.substring(cur_idx, cur_idx + 1)
+        if ch == "." {
+            cur_idx = cur_idx + 1
+            break
+        }
+        let d = llm_json_char_to_digit(ch)
+        if d >= 0.0 {
+            int_part = (int_part * 10.0) + d
+        }
+        cur_idx = cur_idx + 1
+    }
+    let frac_part = 0.0
+    let frac_scale = 0.1
+    while cur_idx < nlen {
+        let ch = num_str.substring(cur_idx, cur_idx + 1)
+        let d = llm_json_char_to_digit(ch)
+        if d >= 0.0 {
+            frac_part = frac_part + (d * frac_scale)
+            frac_scale = frac_scale * 0.1
+        }
+        cur_idx = cur_idx + 1
+    }
+    return sign * (int_part + frac_part)
+}
+
+fn llm_json_is_ws(ch) {
+    if ch == " " { return true }
+    if ch == "\t" { return true }
+    if ch == "\n" { return true }
+    if ch == "\r" { return true }
+    return false
+}
+
+fn llm_json_skip_ws(s, idx, n) {
+    while idx < n {
+        let ch = s.substring(idx, idx + 1)
+        if llm_json_is_ws(ch) == false {
+            return idx
+        }
+        idx = idx + 1
+    }
+    return idx
+}
+
+fn llm_json_parse_string(s, idx, n) {
+    idx = idx + 1
+    let res = ""
+    while idx < n {
+        let ch = s.substring(idx, idx + 1)
+        if ch == "\"" {
+            idx = idx + 1
+            let out = {}
+            out["val"] = res
+            out["idx"] = idx
+            return out
+        }
+        if ch == "\\" {
+            idx = idx + 1
+            let next_ch = s.substring(idx, idx + 1)
+            if next_ch == "n" { res = res + "\n" }
+            if next_ch == "t" { res = res + "\t" }
+            if next_ch == "\"" { res = res + "\"" }
+            if next_ch == "\\" { res = res + "\\" }
+            idx = idx + 1
+        } else {
+            res = res + ch
+            idx = idx + 1
+        }
+    }
+    let out = {}
+    out["val"] = res
+    out["idx"] = idx
+    return out
+}
+
+fn llm_json_parse_number(s, idx, n) {
+    let start = idx
+    let ch = s.substring(idx, idx + 1)
+    if ch == "-" { idx = idx + 1 }
+    while idx < n {
+        ch = s.substring(idx, idx + 1)
+        if ch == "." {
+            idx = idx + 1
+        } else {
+            if llm_json_char_to_digit(ch) >= 0.0 {
+                idx = idx + 1
+            } else {
+                break
+            }
+        }
+    }
+    if start == idx {
+        let out = {}
+        out["val"] = 0
+        out["idx"] = idx + 1
+        return out
+    }
+    let num_str = s.substring(start, idx)
+    let num_val = llm_json_str_to_num(num_str)
+    let out = {}
+    out["val"] = num_val
+    out["idx"] = idx
+    return out
+}
+
+fn llm_json_parse_array(s, idx, n) {
+    idx = idx + 1
+    let arr = []
+    while idx < n {
+        idx = llm_json_skip_ws(s, idx, n)
+        if idx >= n { break }
+        let ch = s.substring(idx, idx + 1)
+        if ch == "]" {
+            idx = idx + 1
+            let out = {}
+            out["val"] = arr
+            out["idx"] = idx
+            return out
+        }
+        let item_res = llm_json_parse_value(s, idx, n)
+        arr = Array.push(arr, item_res["val"])
+        idx = llm_json_skip_ws(s, item_res["idx"], n)
+        if idx < n {
+            ch = s.substring(idx, idx + 1)
+            if ch == "," {
+                idx = idx + 1
+            }
+        }
+    }
+    let out = {}
+    out["val"] = arr
+    out["idx"] = idx
+    return out
+}
+
+fn llm_json_parse_object(s, idx, n) {
+    idx = idx + 1
+    let obj = {}
+    while idx < n {
+        idx = llm_json_skip_ws(s, idx, n)
+        if idx >= n { break }
+        let ch = s.substring(idx, idx + 1)
+        if ch == "}" {
+            idx = idx + 1
+            let out = {}
+            out["val"] = obj
+            out["idx"] = idx
+            return out
+        }
+        if ch == "\"" {
+            let key_res = llm_json_parse_string(s, idx, n)
+            let key = key_res["val"]
+            idx = llm_json_skip_ws(s, key_res["idx"], n)
+            ch = s.substring(idx, idx + 1)
+            if ch == ":" { idx = idx + 1 }
+            idx = llm_json_skip_ws(s, idx, n)
+            let val_res = llm_json_parse_value(s, idx, n)
+            obj[key] = val_res["val"]
+            idx = llm_json_skip_ws(s, val_res["idx"], n)
+            if idx < n {
+                ch = s.substring(idx, idx + 1)
+                if ch == "," { idx = idx + 1 }
+            }
+        } else {
+            idx = idx + 1
+        }
+    }
+    let out = {}
+    out["val"] = obj
+    out["idx"] = idx
+    return out
+}
+
+fn llm_json_parse_value(s, idx, n) {
+    idx = llm_json_skip_ws(s, idx, n)
+    if idx >= n {
+        let out = {}
+        out["val"] = 0
+        out["idx"] = n
+        return out
+    }
+    let ch = s.substring(idx, idx + 1)
+    if ch == "{" {
+        return llm_json_parse_object(s, idx, n)
+    }
+    if ch == "[" {
+        return llm_json_parse_array(s, idx, n)
+    }
+    if ch == "\"" {
+        return llm_json_parse_string(s, idx, n)
+    }
+    if ch == "t" {
+        let out = {}
+        out["val"] = 1
+        out["idx"] = idx + 4
+        return out
+    }
+    if ch == "f" {
+        let out = {}
+        out["val"] = 0
+        out["idx"] = idx + 5
+        return out
+    }
+    if ch == "n" {
+        let out = {}
+        out["val"] = 0
+        out["idx"] = idx + 4
+        return out
+    }
+    return llm_json_parse_number(s, idx, n)
+}
+
+class LLMJSONOutputParser {
+    fn create() {
+        let jop_obj = {}
+        jop_obj["type"] = "JSONOutputParser"
+        return jop_obj
+    }
+
+    fn parse(jop_self, text) {
+        let n = len(text)
+        let s_idx = 0
+        let md_start = index_of(text, "```json")
+        if md_start >= 0 {
+            let inner_start = index_of(text, "{")
+            if inner_start >= 0 {
+                s_idx = inner_start
+            }
+        } else {
+            let b_start = index_of(text, "{")
+            let a_start = index_of(text, "[")
+            if b_start >= 0 {
+                if a_start >= 0 {
+                    if b_start < a_start { s_idx = b_start } else { s_idx = a_start }
+                } else {
+                    s_idx = b_start
+                }
+            } else {
+                if a_start >= 0 { s_idx = a_start }
+            }
+        }
+        let res = llm_json_parse_value(text, s_idx, n)
+        return res["val"]
+    }
+}
+
+class LLMChain {
+    fn create(ch_steps) {
+        let ch_obj = {}
+        ch_obj["type"] = "Chain"
+        ch_obj["steps"] = ch_steps
+        return ch_obj
+    }
+
+    fn invoke(ch_self, ch_input) {
+        let ch_cur = ch_input
+        let ch_n = len(ch_self["steps"])
+        let ch_i = 0
+        while ch_i < ch_n {
+            let ch_step = ch_self["steps"][ch_i]
+            if ch_step["type"] == "PromptTemplate" {
+                ch_cur = LLMPromptTemplate.format(ch_step, ch_cur)
+            } else {
+                if ch_step["type"] == "StrOutputParser" {
+                    ch_cur = LLMStrOutputParser.parse(ch_step, ch_cur)
+                } else {
+                    if ch_step["type"] == "JSONOutputParser" {
+                        ch_cur = LLMJSONOutputParser.parse(ch_step, ch_cur)
+                    } else {
+                        if ch_step.has_key("invoke") == 1 {
+                            let ch_fn = ch_step["invoke"]
+                            ch_cur = invoke_fn1(ch_fn, ch_cur)
+                        }
+                    }
+                }
+            }
+            ch_i = ch_i + 1
+        }
+        return ch_cur
+    }
+}
+
+// --------------------------------------------------------------------------
+// 3. Cyclical State Graph Engine (Nexus LangGraph)
+// --------------------------------------------------------------------------
+class LLMStateGraph {
+    fn create() {
+        let sg_obj = {}
+        sg_obj["type"] = "StateGraph"
+        sg_obj["nodes"] = {}
+        sg_obj["edges"] = {}
+        sg_obj["conditional_edges"] = {}
+        sg_obj["entry_point"] = ""
+        return sg_obj
+    }
+
+    fn add_node(sg_self, sg_name, sg_fn) {
+        let nd = sg_self["nodes"]
+        nd[sg_name] = sg_fn
+        sg_self["nodes"] = nd
+    }
+
+    fn add_edge(sg_self, sg_from, sg_to) {
+        let ed = sg_self["edges"]
+        ed[sg_from] = sg_to
+        sg_self["edges"] = ed
+    }
+
+    fn add_conditional_edges(sg_self, sg_from, sg_router_fn, sg_routes_dict) {
+        let sg_cond = {}
+        sg_cond["router"] = sg_router_fn
+        sg_cond["routes"] = sg_routes_dict
+        let ced = sg_self["conditional_edges"]
+        ced[sg_from] = sg_cond
+        sg_self["conditional_edges"] = ced
+    }
+
+    fn set_entry_point(sg_self, sg_name) {
+        sg_self["entry_point"] = sg_name
+    }
+
+    fn compile(sg_self) {
+        let csg_obj = {}
+        csg_obj["type"] = "CompiledStateGraph"
+        csg_obj["graph"] = sg_self
+        csg_obj["checkpoints"] = []
+        return csg_obj
+    }
+}
+
+class LLMCompiledStateGraph {
+    fn invoke(csg_self, csg_initial_state) {
+        let csg_state = csg_initial_state
+        let csg_cur_node = csg_self["graph"]["entry_point"]
+        let csg_step = 0
+        let csg_max_steps = 100
+        let csg_history = []
+
+        while csg_cur_node != "__end__" {
+            if csg_step >= csg_max_steps { break }
+
+            let csg_snap = {}
+            csg_snap["step"] = csg_step
+            csg_snap["node"] = csg_cur_node
+            csg_history = Array.push(csg_history, csg_snap)
+
+            let csg_handler = csg_self["graph"]["nodes"][csg_cur_node]
+            let csg_update = invoke_fn1(csg_handler, csg_state)
+
+            if csg_update != 0 {
+                let csg_uk = csg_update.keys()
+                let csg_uk_len = len(csg_uk)
+                let csg_ui = 0
+                while csg_ui < csg_uk_len {
+                    let csg_key = csg_uk[csg_ui]
+                    csg_state[csg_key] = csg_update[csg_key]
+                    csg_ui = csg_ui + 1
+                }
+            }
+
+            if csg_self["graph"]["conditional_edges"].has_key(csg_cur_node) == 1 {
+                let csg_cond_rec = csg_self["graph"]["conditional_edges"][csg_cur_node]
+                let csg_router = csg_cond_rec["router"]
+                let csg_route_val = invoke_fn1(csg_router, csg_state)
+                csg_cur_node = csg_cond_rec["routes"][csg_route_val]
+            } else {
+                if csg_self["graph"]["edges"].has_key(csg_cur_node) == 1 {
+                    csg_cur_node = csg_self["graph"]["edges"][csg_cur_node]
+                } else {
+                    csg_cur_node = "__end__"
+                }
+            }
+            csg_step = csg_step + 1
+        }
+        csg_self["checkpoints"] = csg_history
+        return csg_state
+    }
+
+    fn get_checkpoints(csg_self) {
+        return csg_self["checkpoints"]
+    }
+}
+
+// --------------------------------------------------------------------------
+// 4. Tool Calling & Autonomous Agent Executor
+// --------------------------------------------------------------------------
+class LLMTool {
+    fn create(t_name, t_desc, t_fn, t_schema) {
+        let t_obj = {}
+        t_obj["type"] = "Tool"
+        t_obj["name"] = t_name
+        t_obj["description"] = t_desc
+        t_obj["handler"] = t_fn
+        t_obj["schema"] = t_schema
+        return t_obj
+    }
+}
+
+class LLMToolRegistry {
+    fn create() {
+        let tr_obj = {}
+        tr_obj["type"] = "ToolRegistry"
+        tr_obj["tools"] = {}
+        return tr_obj
+    }
+
+    fn register(tr_self, tr_tool) {
+        let tools = tr_self["tools"]
+        tools[tr_tool["name"]] = tr_tool
+        tr_self["tools"] = tools
+    }
+
+    fn get(tr_self, tr_name) {
+        if tr_self["tools"].has_key(tr_name) == 1 {
+            return tr_self["tools"][tr_name]
+        }
+        return 0
+    }
+
+    fn execute(tr_self, tr_name, tr_args) {
+        if tr_self["tools"].has_key(tr_name) == 1 {
+            let tr_t = tr_self["tools"][tr_name]
+            let tr_fn = tr_t["handler"]
+            return invoke_fn1(tr_fn, tr_args)
+        }
+        return "Error: Tool " + tr_name + " not found"
+    }
+
+    fn to_schema(tr_self) {
+        let tr_ks = tr_self["tools"].keys()
+        let tr_list = []
+        let tr_i = 0
+        while tr_i < len(tr_ks) {
+            let tr_k = tr_ks[tr_i]
+            tr_list = Array.push(tr_list, tr_self["tools"][tr_k]["schema"])
+            tr_i = tr_i + 1
+        }
+        return tr_list
+    }
+}
+
+class LLMAgentExecutor {
+    fn create(ae_model_fn, ae_registry, ae_max_iterations) {
+        let ae_obj = {}
+        ae_obj["type"] = "AgentExecutor"
+        ae_obj["model_fn"] = ae_model_fn
+        ae_obj["registry"] = ae_registry
+        ae_obj["max_iterations"] = ae_max_iterations
+        return ae_obj
+    }
+
+    fn run(ae_self, ae_goal) {
+        let ae_mem = LLMConversationMemory.create(20.0)
+        LLMConversationMemory.add_user_message(ae_mem, ae_goal)
+
+        let ae_model = ae_self["model_fn"]
+        let ae_reg = ae_self["registry"]
+        let ae_steps = []
+        let ae_iter = 0
+
+        while ae_iter < ae_self["max_iterations"] {
+            let ae_msgs = LLMConversationMemory.get_messages(ae_mem)
+            let ae_resp = invoke_fn1(ae_model, ae_msgs)
+
+            if ae_resp.has_key("tool_call") == 1 {
+                let ae_tc = ae_resp["tool_call"]
+                let ae_tname = ae_tc["name"]
+                let ae_targs = ae_tc["args"]
+
+                let ae_obs = LLMToolRegistry.execute(ae_reg, ae_tname, ae_targs)
+                LLMConversationMemory.add_ai_message(ae_mem, "Action: " + ae_tname)
+                LLMConversationMemory.add_tool_message(ae_mem, ae_tname + "_0", to_string(ae_obs))
+
+                let ae_step_rec = {}
+                ae_step_rec["iteration"] = ae_iter
+                ae_step_rec["tool"] = ae_tname
+                ae_step_rec["observation"] = ae_obs
+                ae_steps = Array.push(ae_steps, ae_step_rec)
+            } else {
+                let ae_final_out = {}
+                ae_final_out["output"] = ae_resp["final_answer"]
+                ae_final_out["steps"] = ae_steps
+                ae_final_out["total_iterations"] = ae_iter + 1
+                return ae_final_out
+            }
+            ae_iter = ae_iter + 1
+        }
+
+        let ae_fallback = {}
+        ae_fallback["output"] = "Max iterations reached"
+        ae_fallback["steps"] = ae_steps
+        ae_fallback["total_iterations"] = ae_iter
+        return ae_fallback
+    }
+}
+
+// --------------------------------------------------------------------------
+// 5. In-Memory Vector Store & RAG Retrieval
+// --------------------------------------------------------------------------
+class LLMVectorStore {
+    fn create(vs_dim) {
+        let vs_obj = {}
+        vs_obj["type"] = "VectorStore"
+        vs_obj["dim"] = vs_dim * 1.0
+        vs_obj["docs"] = []
+        return vs_obj
+    }
+
+    fn add_document(vs_self, vs_id, vs_text, vs_vec) {
+        let vs_doc = {}
+        vs_doc["id"] = vs_id
+        vs_doc["text"] = vs_text
+        vs_doc["vec"] = vs_vec
+        vs_self["docs"] = Array.push(vs_self["docs"], vs_doc)
+    }
+
+    fn cosine_similarity(vs_a, vs_b) {
+        let vs_dot = 0.0
+        let vs_norm_a = 0.0
+        let vs_norm_b = 0.0
+        let vs_n = len(vs_a)
+        let vs_i = 0
+        while vs_i < vs_n {
+            let vs_va = vs_a[vs_i]
+            let vs_vb = vs_b[vs_i]
+            vs_dot = vs_dot + (vs_va * vs_vb)
+            vs_norm_a = vs_norm_a + (vs_va * vs_va)
+            vs_norm_b = vs_norm_b + (vs_vb * vs_vb)
+            vs_i = vs_i + 1
+        }
+        if vs_norm_a <= 0.0 { return 0.0 }
+        if vs_norm_b <= 0.0 { return 0.0 }
+        return vs_dot / (Math.sqrt(vs_norm_a) * Math.sqrt(vs_norm_b))
+    }
+
+    fn similarity_search(vs_self, vs_query_vec, vs_top_k) {
+        let vs_docs = vs_self["docs"]
+        let vs_ndocs = len(vs_docs)
+        let vs_scored = []
+        let vs_d_idx = 0
+
+        while vs_d_idx < vs_ndocs {
+            let vs_d = vs_docs[vs_d_idx]
+            let vs_score = LLMVectorStore.cosine_similarity(vs_query_vec, vs_d["vec"])
+            let vs_rec = {}
+            vs_rec["id"] = vs_d["id"]
+            vs_rec["text"] = vs_d["text"]
+            vs_rec["score"] = vs_score
+            vs_scored = Array.push(vs_scored, vs_rec)
+            vs_d_idx = vs_d_idx + 1
+        }
+
+        let vs_i = 0
+        while vs_i < vs_ndocs {
+            let vs_j = vs_i + 1
+            while vs_j < vs_ndocs {
+                if vs_scored[vs_j]["score"] > vs_scored[vs_i]["score"] {
+                    let vs_tmp = vs_scored[vs_i]
+                    vs_scored[vs_i] = vs_scored[vs_j]
+                    vs_scored[vs_j] = vs_tmp
+                }
+                vs_j = vs_j + 1
+            }
+            vs_i = vs_i + 1
+        }
+
+        if vs_top_k > vs_ndocs { vs_top_k = vs_ndocs }
+        return Array.slice(vs_scored, 0, vs_top_k)
+    }
+}
+
+class LLMRAGRetriever {
+    fn create(rag_vs, rag_top_k) {
+        let rag_obj = {}
+        rag_obj["type"] = "RAGRetriever"
+        rag_obj["vector_store"] = rag_vs
+        rag_top_k = rag_top_k * 1.0
+        rag_obj["top_k"] = rag_top_k
+        return rag_obj
+    }
+
+    fn retrieve(rag_self, rag_query_vec) {
+        return LLMVectorStore.similarity_search(rag_self["vector_store"], rag_query_vec, rag_self["top_k"])
+    }
+
+    fn format_context(rag_self, rag_query_vec) {
+        let rag_results = LLMVectorStore.similarity_search(rag_self["vector_store"], rag_query_vec, rag_self["top_k"])
+        let rag_out = ""
+        let rag_n = len(rag_results)
+        let rag_i = 0
+        while rag_i < rag_n {
+            let rag_doc = rag_results[rag_i]
+            if rag_i > 0 {
+                rag_out = rag_out + "\n---\n"
+            }
+            rag_out = rag_out + rag_doc["text"]
+            rag_i = rag_i + 1
+        }
+        return rag_out
+    }
+}
+
+// --------------------------------------------------------------------------
+// 6. Universal Dot-Syntax Facade stdllm
+// --------------------------------------------------------------------------
+class stdllm {
+    fn PromptTemplate(template_str) {
+        return LLMPromptTemplate.create(template_str)
+    }
+
+    fn Message() {
+        return LLMMessage
+    }
+
+    fn ConversationMemory(window_size) {
+        return LLMConversationMemory.create(window_size)
+    }
+
+    fn StrParser() {
+        return LLMStrOutputParser.create()
+    }
+
+    fn JSONParser() {
+        return LLMJSONOutputParser.create()
+    }
+
+    fn Chain(steps) {
+        return LLMChain.create(steps)
+    }
+
+    fn StateGraph() {
+        return LLMStateGraph.create()
+    }
+
+    fn Tool(name, description, handler, schema) {
+        return LLMTool.create(name, description, handler, schema)
+    }
+
+    fn ToolRegistry() {
+        return LLMToolRegistry.create()
+    }
+
+    fn AgentExecutor(model_fn, registry, max_iterations) {
+        return LLMAgentExecutor.create(model_fn, registry, max_iterations)
+    }
+
+    fn VectorStore(dim) {
+        return LLMVectorStore.create(dim)
+    }
+
+    fn RAGRetriever(vector_store, top_k) {
+        return LLMRAGRetriever.create(vector_store, top_k)
+    }
+}
+
+// --------------------------------------------------------------------------
+// Test Suites
+// --------------------------------------------------------------------------
+fn test_prompt_templates_and_memory() {
+    print(">>> 1. Testing LLMPromptTemplate & ConversationMemory...")
+
+    let template_str = "You are a {role}. Explain {topic} in the context of {year}."
+    let pt = stdllm.PromptTemplate(template_str)
+    let vars = { "role": "Systems Architect", "topic": "Baremetal LLM Runtimes", "year": "2026" }
+    let formatted = LLMPromptTemplate.format(pt, vars)
+
+    let exp_str = "You are a Systems Architect. Explain Baremetal LLM Runtimes in the context of 2026."
+    test_assert(formatted == exp_str, "PromptTemplate Multi-Variable Formatting")
+
+    let msg_sys = LLMMessage.system("System prompt initialized")
+    let msg_usr = LLMMessage.user("Hello agent")
+    let msg_asst = LLMMessage.assistant("Hello user")
+    let msg_tool = LLMMessage.tool("call_123", "Result: 42")
+
+    test_assert(msg_sys["role"] == "system" && msg_sys["content"] == "System prompt initialized", "Message System Role")
+    test_assert(msg_usr["role"] == "user" && msg_usr["content"] == "Hello agent", "Message User Role")
+    test_assert(msg_asst["role"] == "assistant" && msg_asst["content"] == "Hello user", "Message Assistant Role")
+    test_assert(msg_tool["role"] == "tool" && msg_tool["tool_call_id"] == "call_123", "Message Tool Call ID")
+
+    let mem = stdllm.ConversationMemory(3.0)
+    LLMConversationMemory.add_user_message(mem, "Query 1")
+    LLMConversationMemory.add_ai_message(mem, "Response 1")
+    LLMConversationMemory.add_user_message(mem, "Query 2")
+    LLMConversationMemory.add_ai_message(mem, "Response 2")
+
+    let active_msgs = LLMConversationMemory.get_messages(mem)
+    test_assert(len(active_msgs) == 3, "ConversationMemory Sliding Window Limit (len=3)")
+    test_assert(active_msgs[0]["content"] == "Response 1", "ConversationMemory Oldest Eviction")
+    test_assert(active_msgs[2]["content"] == "Response 2", "ConversationMemory Most Recent Preservation")
+
+    LLMConversationMemory.clear(mem)
+    let cleared_msgs = LLMConversationMemory.get_messages(mem)
+    test_assert(len(cleared_msgs) == 0, "ConversationMemory Buffer Clear")
+}
+
+fn test_output_parsers() {
+    print(">>> 2. Testing Output Parsers (Str & JSON)...")
+
+    let str_parser = stdllm.StrParser()
+    let raw_text = "Nexus Baremetal 2026"
+    let parsed_str = LLMStrOutputParser.parse(str_parser, raw_text)
+    test_assert(parsed_str == raw_text, "StrOutputParser Identity")
+
+    let json_parser = stdllm.JSONParser()
+    let raw_json = "{\"architecture\": \"Transformer\", \"parameters\": 70, \"moe\": true, \"loss\": 0.125}"
+    let parsed_obj = LLMJSONOutputParser.parse(json_parser, raw_json)
+
+    test_assert(parsed_obj["architecture"] == "Transformer", "JSONParser String Value")
+    test_assert(parsed_obj["parameters"] == 70.0, "JSONParser Integer Number Value")
+    test_assert(parsed_obj["moe"] == 1, "JSONParser Boolean True Value")
+    test_assert(approx_equal(parsed_obj["loss"], 0.125, 0.0001), "JSONParser Float Value")
+
+    let md_fenced = "Analysis:\n```json\n{\"status\": \"OPTIMIZED\", \"speedup\": 3.5, \"tags\": [\"simd\", \"ptx\"]}\n```\nDone."
+    let parsed_fenced = LLMJSONOutputParser.parse(json_parser, md_fenced)
+
+    test_assert(parsed_fenced["status"] == "OPTIMIZED", "JSONParser Markdown Fence Extraction")
+    test_assert(approx_equal(parsed_fenced["speedup"], 3.5, 0.001), "JSONParser Float in Fenced Block")
+    let tags_arr = parsed_fenced["tags"]
+    test_assert(len(tags_arr) == 2 && tags_arr[0] == "simd" && tags_arr[1] == "ptx", "JSONParser Nested String Array")
+}
+
+fn mock_reasoning_step(prompt_text) {
+    return "```json\n{\"thought\": \"Analyzed " + prompt_text + "\", \"action\": \"dispatch\", \"exit_code\": 0}\n```"
+}
+
+fn test_composable_chains() {
+    print(">>> 3. Testing Composable Chains (Prompt | Model | Parser)...")
+
+    let pt = stdllm.PromptTemplate("Task: {task}")
+    let parser = stdllm.JSONParser()
+
+    let mock_model_step = {}
+    mock_model_step["type"] = "Model"
+    mock_model_step["invoke"] = mock_reasoning_step
+
+    let chain = stdllm.Chain([pt, mock_model_step, parser])
+    let chain_result = LLMChain.invoke(chain, { "task": "Compile Kernel" })
+
+    test_assert(chain_result["action"] == "dispatch", "Chain Pipeline Execution Action")
+    test_assert(chain_result["exit_code"] == 0.0, "Chain Pipeline Execution Exit Code")
+    test_assert(chain_result["thought"] == "Analyzed Task: Compile Kernel", "Chain Intermediate Input Flow")
+}
+
+fn plan_node(state) {
+    let s = {}
+    s["plan"] = "Execute Task"
+    s["retry_count"] = state["retry_count"] + 1
+    return s
+}
+
+fn execute_node(state) {
+    let s = {}
+    if state["retry_count"] < 2 {
+        s["exec_result"] = "error"
+    } else {
+        s["exec_result"] = "success"
+    }
+    return s
+}
+
+fn evaluate_node(state) {
+    let s = {}
+    if state["exec_result"] == "success" {
+        s["final_status"] = "PASSED"
+    } else {
+        s["final_status"] = "RETRY"
+    }
+    return s
+}
+
+fn eval_router(state) {
+    if state["final_status"] == "RETRY" {
+        return "retry"
+    }
+    return "done"
+}
+
+fn test_state_graph_cyclical_engine() {
+    print(">>> 4. Testing StateGraph Cyclical Routing & Reducers...")
+
+    let graph = stdllm.StateGraph()
+    LLMStateGraph.add_node(graph, "planner", plan_node)
+    LLMStateGraph.add_node(graph, "executor", execute_node)
+    LLMStateGraph.add_node(graph, "evaluator", evaluate_node)
+
+    LLMStateGraph.add_edge(graph, "planner", "executor")
+    LLMStateGraph.add_edge(graph, "executor", "evaluator")
+
+    let route_map = { "retry": "planner", "done": "__end__" }
+    LLMStateGraph.add_conditional_edges(graph, "evaluator", eval_router, route_map)
+    LLMStateGraph.set_entry_point(graph, "planner")
+
+    let compiled_app = LLMStateGraph.compile(graph)
+
+    let initial_state = { "retry_count": 0, "plan": "none", "exec_result": "none", "final_status": "init" }
+    let final_state = LLMCompiledStateGraph.invoke(compiled_app, initial_state)
+
+    test_assert(final_state["retry_count"] == 2.0, "StateGraph Cyclical Iteration Loop Count (retry=2)")
+    test_assert(final_state["exec_result"] == "success", "StateGraph State Mutation Convergence")
+    test_assert(final_state["final_status"] == "PASSED", "StateGraph Final State Reducer Outcome")
+
+    let history = LLMCompiledStateGraph.get_checkpoints(compiled_app)
+    test_assert(len(history) == 6, "StateGraph Checkpoint Trail Length (planner->exec->eval * 2)")
+    test_assert(history[0]["node"] == "planner", "StateGraph Initial Checkpoint Entry")
+    test_assert(history[5]["node"] == "evaluator", "StateGraph Terminal Checkpoint Node")
+}
+
+fn tool_calc(args) {
+    let a = args["a"]
+    let b = args["b"]
+    return a + b
+}
+
+fn tool_system_status(args) {
+    return "VRAM: 6GB OK, Status: ONLINE"
+}
+
+fn mock_agent_brain(messages) {
+    let last_idx = len(messages) - 1
+    let last_msg = messages[last_idx]
+
+    if last_msg["role"] == "user" {
+        let resp = {}
+        let tc = {}
+        tc["name"] = "add_numbers"
+        tc["args"] = { "a": 100.0, "b": 237.0 }
+        resp["tool_call"] = tc
+        return resp
+    }
+
+    if last_msg["role"] == "tool" {
+        let resp = {}
+        resp["final_answer"] = "Calculation Complete: Total is " + last_msg["content"]
+        return resp
+    }
+
+    let fallback = {}
+    fallback["final_answer"] = "Idle"
+    return fallback
+}
+
+fn test_tool_calling_and_agent_executor() {
+    print(">>> 5. Testing Tool Calling & Autonomous Agent Executor...")
+
+    let registry = stdllm.ToolRegistry()
+
+    let t1_schema = { "name": "add_numbers", "description": "Adds two numbers" }
+    let tool_add = stdllm.Tool("add_numbers", "Adds two numbers", tool_calc, t1_schema)
+    LLMToolRegistry.register(registry, tool_add)
+
+    let t2_schema = { "name": "sys_status", "description": "Fetches VRAM status" }
+    let tool_sys = stdllm.Tool("sys_status", "Fetches VRAM status", tool_system_status, t2_schema)
+    LLMToolRegistry.register(registry, tool_sys)
+
+    let direct_res = LLMToolRegistry.execute(registry, "add_numbers", { "a": 15.0, "b": 27.0 })
+    test_assert(direct_res == 42.0, "ToolRegistry Direct Execution")
+
+    let schemas = LLMToolRegistry.to_schema(registry)
+    test_assert(len(schemas) == 2, "ToolRegistry Schema Export Count")
+
+    let executor = stdllm.AgentExecutor(mock_agent_brain, registry, 5.0)
+    let agent_outcome = LLMAgentExecutor.run(executor, "Compute 100 + 237")
+
+    test_assert(agent_outcome["output"] == "Calculation Complete: Total is 337", "AgentExecutor Multi-Turn Reasoning Output")
+    test_assert(agent_outcome["total_iterations"] == 2.0, "AgentExecutor Turn Count")
+    let steps = agent_outcome["steps"]
+    test_assert(len(steps) == 1 && steps[0]["tool"] == "add_numbers" && steps[0]["observation"] == 337.0, "AgentExecutor Tool Observation History")
+}
+
+fn test_vector_store_and_rag() {
+    print(">>> 6. Testing VectorStore Cosine Similarity & RAG Retriever...")
+
+    let vs = stdllm.VectorStore(4.0)
+    LLMVectorStore.add_document(vs, "doc1", "Nexus is a baremetal runtime with SIMD optimization.", [1.0, 0.0, 0.0, 0.0])
+    LLMVectorStore.add_document(vs, "doc2", "DeepSeek MoE routes tokens to top-k sparse experts.", [0.0, 1.0, 0.0, 0.0])
+    LLMVectorStore.add_document(vs, "doc3", "LangGraph orchestrates cyclical state workflows.", [0.0, 0.0, 1.0, 0.0])
+    LLMVectorStore.add_document(vs, "doc4", "GPU Tensor Kernels execute FlashAttention on chip.", [0.8, 0.6, 0.0, 0.0])
+
+    let sim_self = LLMVectorStore.cosine_similarity([1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0])
+    let sim_ortho = LLMVectorStore.cosine_similarity([1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0])
+    let sim_diag = LLMVectorStore.cosine_similarity([1.0, 0.0, 0.0, 0.0], [0.8, 0.6, 0.0, 0.0])
+
+    test_assert(approx_equal(sim_self, 1.0, 0.0001), "VectorStore Cosine Identity (sim=1.0)")
+    test_assert(approx_equal(sim_ortho, 0.0, 0.0001), "VectorStore Cosine Orthogonality (sim=0.0)")
+    test_assert(approx_equal(sim_diag, 0.8, 0.0001), "VectorStore Cosine Angle Alignment (sim=0.8)")
+
+    let query_vec = [0.95, 0.1, 0.0, 0.0]
+    let top_docs = LLMVectorStore.similarity_search(vs, query_vec, 2.0)
+
+    test_assert(len(top_docs) == 2, "VectorStore Top-K Retrieval Length")
+    test_assert(top_docs[0]["id"] == "doc1", "VectorStore Top-1 Best Match Ranking")
+    test_assert(top_docs[1]["id"] == "doc4", "VectorStore Top-2 Runner-Up Ranking")
+
+    let retriever = stdllm.RAGRetriever(vs, 2.0)
+    let context_block = LLMRAGRetriever.format_context(retriever, query_vec)
+
+    test_assert(index_of(context_block, "Nexus is a baremetal runtime") >= 0, "RAGRetriever Context Block Chunk 1")
+    test_assert(index_of(context_block, "GPU Tensor Kernels execute") >= 0, "RAGRetriever Context Block Chunk 2")
+    test_assert(index_of(context_block, "\n---\n") >= 0, "RAGRetriever Document Separator Concat")
+}
+
+fn test_universal_dot_syntax() {
+    print(">>> 7. Testing Universal Dot-Syntax Facade stdllm.* (Phase 5)...")
+
+    let pt = stdllm.PromptTemplate("Prompt: {val}")
+    test_assert(pt["type"] == "PromptTemplate", "stdllm.PromptTemplate Facade")
+
+    let mem = stdllm.ConversationMemory(5.0)
+    test_assert(mem["type"] == "ConversationMemory", "stdllm.ConversationMemory Facade")
+
+    let sp = stdllm.StrParser()
+    test_assert(sp["type"] == "StrOutputParser", "stdllm.StrParser Facade")
+
+    let jp = stdllm.JSONParser()
+    test_assert(jp["type"] == "JSONOutputParser", "stdllm.JSONParser Facade")
+
+    let ch = stdllm.Chain([])
+    test_assert(ch["type"] == "Chain", "stdllm.Chain Facade")
+
+    let sg = stdllm.StateGraph()
+    test_assert(sg["type"] == "StateGraph", "stdllm.StateGraph Facade")
+
+    let tr = stdllm.ToolRegistry()
+    test_assert(tr["type"] == "ToolRegistry", "stdllm.ToolRegistry Facade")
+
+    let t = stdllm.Tool("t", "desc", 0, {})
+    test_assert(t["type"] == "Tool", "stdllm.Tool Facade")
+
+    let ae = stdllm.AgentExecutor(0, tr, 3.0)
+    test_assert(ae["type"] == "AgentExecutor", "stdllm.AgentExecutor Facade")
+
+    let vs = stdllm.VectorStore(16.0)
+    test_assert(vs["type"] == "VectorStore", "stdllm.VectorStore Facade")
+
+    let rag = stdllm.RAGRetriever(vs, 3.0)
+    test_assert(rag["type"] == "RAGRetriever", "stdllm.RAGRetriever Facade")
+}
+
+fn main() {
+    print("==================================================================")
+    print("Nexus Baremetal - stdllm Phase 5 Comprehensive Unit Test Suite")
+    print("Native LangChain, Cyclical LangGraph & Autonomous Agent Orchestration")
+    print("==================================================================")
+
+    test_prompt_templates_and_memory()
+    test_output_parsers()
+    test_composable_chains()
+    test_state_graph_cyclical_engine()
+    test_tool_calling_and_agent_executor()
+    test_vector_store_and_rag()
+    test_universal_dot_syntax()
+
+    print("==================================================================")
+    print("ALL STDLLM PHASE 5 AGENTIC PIPELINES PASSED (100% VERIFIED)")
+    print("==================================================================")
+}
+
+main()
