@@ -2072,8 +2072,8 @@ asm_gpu_dispatch:
     jne .gemm_from_regs
     movsd xmm0, [r15]
     movsd xmm1, [r15 + 8]
-    # Check if 3 arguments passed: [r15 - 16] is length
-    mov r8, [r15 - 16]
+    # Check if 3 arguments passed: [r15 - 8] is integer length
+    mov r8, [r15 - 8]
     cmp r8, 3
     jl .gemm_have_ab
     movsd xmm2, [r15 + 16]
@@ -2146,7 +2146,7 @@ asm_gpu_dispatch:
     mov edx, [rbp - 76]
     call asm_gpu_alloc_vram
     test eax, eax
-    jnz .gemm_host
+    jnz .gemm_fail
     mov rdi, [rbp - 48]     # d_C
     mov [rbp - 88], rdi
     mov qword ptr [rbp - 160], 0
@@ -2336,27 +2336,30 @@ asm_gpu_dispatch:
     mov rdx, [rbp - 76]
     call asm_gpu_alloc_vram
     test eax, eax
-    jnz .tr_host
+    jnz .tr_fail
+
     mov rdi, [rbp - 48]
     mov [rbp - 88], rdi     # d_out
 
-    # Setup kernel args: [&d_in, &d_out, &rows, &cols]
+    # Setup kernel args in dedicated non-overlapping stack area:
+    # [rbp - 200] = rows, [rbp - 204] = cols
+    # [rbp - 240] = &d_in, [rbp - 232] = &d_out, [rbp - 224] = &rows, [rbp - 216] = &cols
     mov edx, [rsi + 40]
-    mov [rbp - 96], edx     # rows
+    mov [rbp - 200], edx    # rows
     mov edx, [rsi + 44]
-    mov [rbp - 100], edx    # cols
+    mov [rbp - 204], edx    # cols
 
     lea rax, [rsi + 16]
-    mov [rbp - 128], rax    # &d_in
+    mov [rbp - 240], rax    # &d_in
     lea rax, [rbp - 88]
-    mov [rbp - 120], rax    # &d_out
-    lea rax, [rbp - 96]
-    mov [rbp - 112], rax    # &rows
-    lea rax, [rbp - 100]
-    mov [rbp - 104], rax    # &cols
+    mov [rbp - 232], rax    # &d_out
+    lea rax, [rbp - 200]
+    mov [rbp - 224], rax    # &rows
+    lea rax, [rbp - 204]
+    mov [rbp - 216], rax    # &cols
 
     # grid = ((cols + 15)/16, (rows + 15)/16, 1)
-    mov eax, [rbp - 100]    # cols
+    mov eax, [rbp - 204]    # cols
     add eax, 15
     shr eax, 4
     test eax, eax
@@ -2365,7 +2368,7 @@ asm_gpu_dispatch:
 1:
     mov edx, eax            # grid_x
 
-    mov eax, [rbp - 96]     # rows
+    mov eax, [rbp - 200]    # rows
     add eax, 15
     shr eax, 4
     test eax, eax
@@ -2381,7 +2384,7 @@ asm_gpu_dispatch:
     mov dword ptr [rsp + 48], 1  # block_z
     mov dword ptr [rsp + 56], 0  # smem
     mov qword ptr [rsp + 64], 0  # stream
-    lea rax, [rbp - 128]
+    lea rax, [rbp - 240]
     mov [rsp + 72], rax          # kernelParams
     mov qword ptr [rsp + 80], 0  # extra
     call [rip + gpu_p_cuLaunchKernel]
@@ -2471,8 +2474,8 @@ asm_gpu_dispatch:
     jne .vec_from_regs
     movsd xmm0, [r15]
     movsd xmm1, [r15 + 8]
-    # Check if 3 arguments passed: [r15 - 16] is array length
-    mov r8, [r15 - 16]
+    # Check if 3 arguments passed: [r15 - 8] is integer length
+    mov r8, [r15 - 8]
     cmp r8, 3
     jl .vec_have_ab
     movsd xmm2, [r15 + 16]
@@ -2530,7 +2533,7 @@ asm_gpu_dispatch:
     mov rdx, [rbp - 76]
     call asm_gpu_alloc_vram
     test eax, eax
-    jnz .vec_host
+    jnz .vec_fail
     mov rdi, [rbp - 48]
     mov [rbp - 88], rdi
     mov qword ptr [rbp - 160], 0

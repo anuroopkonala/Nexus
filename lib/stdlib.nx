@@ -9,7 +9,15 @@ class System {
     }
 
     fn print_str(val) {
-        print_str(val)
+        print(val)
+    }
+
+    fn input(prompt) {
+        return input(prompt)
+    }
+
+    fn read_line(prompt) {
+        return read_line(prompt)
     }
 
     fn exit(code) {
@@ -354,8 +362,23 @@ class Array {
 
 fn upper(str) { return to_upper(str) }
 fn lower(str) { return to_lower(str) }
-fn starts_with(str, prefix) { return String.starts_with(str, prefix) }
-fn ends_with(str, suffix) { return String.ends_with(str, suffix) }
+fn starts_with(str, prefix) {
+    let plen = len(prefix)
+    let slen = len(str)
+    if plen > slen { return 0 }
+    let sub = substring(str, 0, plen)
+    if sub == prefix { return 1 }
+    return 0
+}
+fn ends_with(str, suffix) {
+    let sfxlen = len(suffix)
+    let slen = len(str)
+    if sfxlen > slen { return 0 }
+    let start = slen - sfxlen
+    let sub = substring(str, start, sfxlen)
+    if sub == suffix { return 1 }
+    return 0
+}
 fn trim(str) { return String.trim(str) }
 fn replace(str, target, replacement) { return String.replace(str, target, replacement) }
 fn reverse(arr) { return Array.reverse(arr) }

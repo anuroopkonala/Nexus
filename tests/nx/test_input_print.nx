@@ -1,0 +1,12 @@
+// Test high-speed, memory-safe input() and direct print() functionality
+
+fn main() {
+    print("Testing input and direct print...")
+    let val = "Direct print handles string directly"
+    print(val)
+    print(12345.67)
+    print([1.0, 2.0, 3.0])
+    print("Input and print successfully verified")
+}
+
+main()

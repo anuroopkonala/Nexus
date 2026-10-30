@@ -38,8 +38,16 @@
 .extern fflush
 .extern memset
 .extern strncmp
+.extern GetStdHandle
+.extern ReadFile
 
 .section .data
+str_prompt_fmt: .asciz "%s"
+.align 16
+input_read_buf: .space 65536
+input_buf_avail: .quad 0
+input_buf_idx: .quad 0
+input_line_scratch: .space 65536
 in_crash_handler: .long 0
 str_crash_fmt: .asciz "\n[CRASH DETECTED]\n  RIP=%p RSI=%p\n  R10=%p R11=%p\n  R12=%p R13=%p\n  RAX=%p RDX=%p\n"
 str_rust_syntax_err:
@@ -5480,24 +5488,157 @@ op_print_c:
     NEXT
 
 op_print_str:
-    mov r8, [rsi]        # ptr_reg (register number)
-    add rsi, 8
-    mov r11, [rbx + r8 * 8]  # check ptr_bank first
-    test r11, r11
-    jnz 1f
-    mov r11, [rdi + r8 * 8]  # fallback to float_bank
-1:
+    jmp op_print
+
+.globl op_input
+.align 64
+op_input:
+    mov r12, [rsi]       # dest reg
+    mov r8,  [rsi + 8]   # prompt reg (optional)
+    add rsi, 16
+
     push rsi
     push rdi
-    push rbx             # extra push to align stack to 16
-    sub rsp, 40          # shadow space
-    lea rcx, [rip + str_fmt]
-    mov rdx, r11
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 48
+
+    # Check if prompt passed
+    mov rdx, [rbx + r8 * 8]
+    test rdx, rdx
+    jnz .inp_prompt
+    mov rdx, [rdi + r8 * 8]
+.inp_prompt:
+    test rdx, rdx
+    jz .inp_read
+    cmp rdx, 0x10000
+    jb .inp_read
+    mov r9, 0x00007FFFFFFFFFFF
+    cmp rdx, r9
+    ja .inp_read
+    # Print prompt without newline
+    lea rcx, [rip + str_prompt_fmt]  # "%s"
     call printf
-    add rsp, 40
+    xor ecx, ecx
+    call fflush
+
+.inp_read:
+    xor r14, r14         # line_len = 0
+
+.inp_char_loop:
+    # Check if input buffer has available bytes
+    mov rax, [rip + input_buf_avail]
+    cmp rax, 0
+    jg .inp_has_data
+
+    # Refill buffer via ReadFile
+    mov ecx, -10         # STD_INPUT_HANDLE = ((DWORD)-10)
+    call GetStdHandle
+    mov rcx, rax         # hFile
+    lea rdx, [rip + input_read_buf]
+    mov r8d, 65535       # max bytes
+    lea r9, [rsp + 32]   # &bytesRead
+    mov qword ptr [rsp + 32], 0
+    mov qword ptr [rsp + 40], 0
+    call ReadFile
+
+    mov rax, [rsp + 32]  # bytesRead
+    test rax, rax
+    jle .inp_eof         # EOF or error
+
+    mov [rip + input_buf_avail], rax
+    mov qword ptr [rip + input_buf_idx], 0
+
+.inp_has_data:
+    # Read next byte from input_read_buf
+    mov r10, [rip + input_buf_idx]
+    lea r11, [rip + input_read_buf]
+    movzx ecx, byte ptr [r11 + r10]
+    inc r10
+    mov [rip + input_buf_idx], r10
+    dec qword ptr [rip + input_buf_avail]
+
+    # Check for newline \n (10) or \r (13)
+    cmp cl, 10           # '\n'
+    je .inp_line_done
+    cmp cl, 13           # '\r'
+    je .inp_check_cr
+
+    # Append character to line scratch (cap at 65530 for safety)
+    cmp r14, 65530
+    jae .inp_line_done
+    lea r11, [rip + input_line_scratch]
+    mov [r11 + r14], cl
+    inc r14
+    jmp .inp_char_loop
+
+.inp_check_cr:
+    # If '\r' is followed immediately by '\n', consume '\n' as well
+    mov rax, [rip + input_buf_avail]
+    test rax, rax
+    jle .inp_line_done
+    mov r10, [rip + input_buf_idx]
+    lea r11, [rip + input_read_buf]
+    cmp byte ptr [r11 + r10], 10
+    jne .inp_line_done
+    # Consume '\n'
+    inc r10
+    mov [rip + input_buf_idx], r10
+    dec qword ptr [rip + input_buf_avail]
+    jmp .inp_line_done
+
+.inp_eof:
+    test r14, r14
+    jnz .inp_line_done
+    # True EOF with no chars read: return empty string
+    mov rcx, 1
+    xor edx, edx
+    call gc_malloc
+    mov byte ptr [rax], 0
+    jmp .inp_store
+
+.inp_line_done:
+    # Null-terminate scratch buffer
+    lea r11, [rip + input_line_scratch]
+    mov byte ptr [r11 + r14], 0
+
+    # Allocate exact size in GC arena
+    lea rcx, [r14 + 1]
+    xor edx, edx         # type_tag = 0 (raw string)
+    call gc_malloc
+    mov r15, rax
+
+    # Copy from scratch buffer into allocated string
+    lea rcx, [rip + input_line_scratch]
+    xor r8, r8
+.inp_copy_loop:
+    cmp r8, r14
+    jae .inp_copy_done
+    mov dl, [rcx + r8]
+    mov [r15 + r8], dl
+    inc r8
+    jmp .inp_copy_loop
+
+.inp_copy_done:
+    mov byte ptr [r15 + r14], 0
+    mov rax, r15
+
+.inp_store:
+    add rsp, 48
+    pop r15
+    pop r14
+    pop r13
+    pop r12
     pop rbx
     pop rdi
     pop rsi
+
+    # Store into destination register
+    mov [rbx + r12 * 8], rax
+    mov [rdi + r12 * 8], rax
     NEXT
 
 op_sin:
@@ -15096,8 +15237,17 @@ fgets:
     lea rdx, [rip + str_FILE_READ_TEXT]
     call strcmp
     test eax, eax
-    jne .check_GET_OP_FILE_WRITE_TEXT
+    jne .check_GET_OP_INPUT
     lea r15, [rip + op_file_read_text]
+    jmp .get_op_found
+
+.check_GET_OP_INPUT:
+    lea rcx, [rip + val_buf]
+    lea rdx, [rip + str_INPUT]
+    call strcmp
+    test eax, eax
+    jne .check_GET_OP_FILE_WRITE_TEXT
+    lea r15, [rip + op_input]
     jmp .get_op_found
 
 .check_GET_OP_FILE_WRITE_TEXT:

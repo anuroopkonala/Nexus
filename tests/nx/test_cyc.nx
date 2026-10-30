@@ -1,0 +1,7 @@
+import stdlib
+
+fn main() {
+    let c = System.cpu_cycles()
+    print(c)
+}
+main()

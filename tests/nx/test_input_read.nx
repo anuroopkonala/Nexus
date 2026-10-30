@@ -1,0 +1,14 @@
+import stdlib
+
+fn main() {
+    print("Testing input and direct print...")
+    let val = "Direct print handles string directly"
+    print(val)
+    let s = input()
+    print("Input handled cleanly: " + s)
+    let s2 = System.read_line()
+    print("System.read_line handled cleanly: " + s2)
+    print("Input and print successfully verified")
+}
+
+main()

@@ -72,7 +72,9 @@ $tests = @(
     "tests/nx/test_stress_infinite_args.nx",
     "tests/nx/test_stress_infinite_class.nx",
     "tests/nx/test_stress_infinite_code.nx",
-    "tests/nx/test_stress_error_recovery.nx"
+    "tests/nx/test_stress_error_recovery.nx",
+    "tests/nx/test_input_print.nx",
+    "tests/nx/test_input_read.nx"
 )
 
 $passed = 0
@@ -80,7 +82,11 @@ $failed = 0
 
 foreach ($t in $tests) {
     Write-Host "Running $t..." -NoNewline
-    $out = .\bin\nexus_core.exe $t 2>&1
+    if ($t -match "input") {
+        $out = "sample_input_line1`nsample_input_line2" | .\bin\nexus_core.exe $t 2>&1
+    } else {
+        $out = .\bin\nexus_core.exe $t 2>&1
+    }
     $code = $LASTEXITCODE
     $outStr = $out -join "`n"
     if ($code -eq 0 -and $outStr -match "VM execution complete") {

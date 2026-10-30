@@ -47,13 +47,13 @@ class Profiler {
     }
 
     fn print_summary(prof_record) {
-        System.print_str("------------------------------------------------------------------")
-        System.print_str("NEXUS HARDWARE PROFILER METRICS: " + prof_record["name"])
-        System.print_str("------------------------------------------------------------------")
-        System.print_str("  Iterations:       " + to_string(prof_record["count"]))
-        System.print_str("  Total CPU Cycles: " + to_string(prof_record["total_cycles"]))
-        System.print_str("  Avg Cycles/Op:    " + to_string(prof_record["avg_cycles"]))
-        System.print_str("  VRAM Delta:       " + to_string(prof_record["vram_bytes"]) + " bytes")
-        System.print_str("------------------------------------------------------------------")
+        print("------------------------------------------------------------------")
+        print("NEXUS HARDWARE PROFILER METRICS: " + prof_record["name"])
+        print("------------------------------------------------------------------")
+        print("  Iterations:       " + to_string(prof_record["count"]))
+        print("  Total CPU Cycles: " + to_string(prof_record["total_cycles"]))
+        print("  Avg Cycles/Op:    " + to_string(prof_record["avg_cycles"]))
+        print("  VRAM Delta:       " + to_string(prof_record["vram_bytes"]) + " bytes")
+        print("------------------------------------------------------------------")
     }
 }
