@@ -73,6 +73,10 @@ class TensorMath {
         return gpu_dispatch(21.0, [a, b])
     }
 
+    fn scale(a, s) {
+        return gpu_dispatch(23.0, [a, s])
+    }
+
     fn div(a, b) {
         return gpu_dispatch(22.0, [a, b])
     }
@@ -107,6 +111,18 @@ class TensorMath {
 
     fn softmax(a) {
         return gpu_dispatch(42.0, [a])
+    }
+
+    fn silu(a) {
+        return gpu_dispatch(41.0, [a])
+    }
+
+    fn layernorm(a, gamma, beta, eps) {
+        return gpu_dispatch(43.0, [a, gamma, beta, eps])
+    }
+
+    fn rmsnorm(a, gamma, eps) {
+        return gpu_dispatch(44.0, [a, gamma, eps])
     }
 
     fn apply_grad(param, grad, lr) {
@@ -146,6 +162,10 @@ class torch {
         return TensorMath.matmul(a, b)
     }
 
+    fn scale(a, s) {
+        return TensorMath.scale(a, s)
+    }
+
     fn add(a, b) {
         return TensorMath.add(a, b)
     }
@@ -160,6 +180,18 @@ class torch {
 
     fn gelu(a) {
         return TensorMath.gelu(a)
+    }
+
+    fn silu(a) {
+        return TensorMath.silu(a)
+    }
+
+    fn layernorm(a, gamma, beta, eps) {
+        return TensorMath.layernorm(a, gamma, beta, eps)
+    }
+
+    fn rmsnorm(a, gamma, eps) {
+        return TensorMath.rmsnorm(a, gamma, eps)
     }
 
     fn cuda_is_available() {

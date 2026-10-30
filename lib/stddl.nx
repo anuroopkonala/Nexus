@@ -1,0 +1,787 @@
+// ==============================================================================
+// Nexus Baremetal - stddl: Standard Deep Learning Models & Layer Primitives
+// Composable Neural Network Architectures, Normalization, Activations & Losses
+// 100% Pure Architecture: Zero External CRT, Zero External Compilers
+// Microarchitecturally Optimized (< Native Reference Latency)
+// ==============================================================================
+
+import stdlib
+import stdtorch
+
+// --------------------------------------------------------------------------
+// 1. Base Module & Parameter Abstraction
+// --------------------------------------------------------------------------
+class Module {
+    fn create(layer_type) {
+        let m = {}
+        m["type"] = layer_type
+        m["params"] = []
+        m["is_training"] = 1.0
+        return m
+    }
+
+    fn train(m) {
+        m["is_training"] = 1.0
+        let layers = m["layers"]
+        if layers != 0 {
+            let n = Array.len(layers)
+            let i = 0
+            while i < n {
+                Module.train(layers[i])
+                i = i + 1
+            }
+        }
+        return m
+    }
+
+    fn eval(m) {
+        m["is_training"] = 0.0
+        let layers = m["layers"]
+        if layers != 0 {
+            let n = Array.len(layers)
+            let i = 0
+            while i < n {
+                Module.eval(layers[i])
+                i = i + 1
+            }
+        }
+        return m
+    }
+
+    fn parameters(m) {
+        let p = m["params"]
+        if p != 0 {
+            return p
+        }
+        return []
+    }
+}
+
+// --------------------------------------------------------------------------
+// 2. Dense / Linear Fully Connected Layer
+// --------------------------------------------------------------------------
+class DenseLayer {
+    fn create(in_features, out_features) {
+        // He / Kaiming normal weight initialization: scale = sqrt(2 / in_features)
+        let scale = Math.sqrt(2.0 / in_features)
+        let raw_w = torch.randn(in_features, out_features)
+        let w = TensorMath.scale(raw_w, scale)
+        let b = torch.zeros([1.0, out_features])
+
+        let layer = Module.create("Dense")
+        layer["in_features"] = in_features
+        layer["out_features"] = out_features
+        layer["weights"] = w
+        layer["bias"] = b
+        layer["grad_w"] = 0
+        layer["grad_b"] = 0
+        layer["last_x"] = 0
+
+        // Parameter list
+        let p_w = {}
+        p_w["name"] = "weights"
+        p_w["data"] = w
+        p_w["grad"] = 0
+
+        let p_b = {}
+        p_b["name"] = "bias"
+        p_b["data"] = b
+        p_b["grad"] = 0
+
+        layer["params"] = [p_w, p_b]
+        return layer
+    }
+
+    fn forward(layer, x) {
+        layer["last_x"] = x
+        let xw = TensorMath.matmul(x, layer["weights"])
+        let out = TensorMath.add(xw, layer["bias"])
+        return out
+    }
+
+    fn backward(layer, grad_output) {
+        let x = layer["last_x"]
+        let xt = TensorMath.transpose(x)
+        let dw = TensorMath.matmul(xt, grad_output)
+        layer["grad_w"] = dw
+        layer["grad_b"] = grad_output
+
+        let params = layer["params"]
+        params[0]["grad"] = dw
+        params[1]["grad"] = grad_output
+
+        let wt = TensorMath.transpose(layer["weights"])
+        let dx = TensorMath.matmul(grad_output, wt)
+        return dx
+    }
+}
+
+// --------------------------------------------------------------------------
+// 3. Conv2D Convolutional Layer (im2col + GEMM projection)
+// --------------------------------------------------------------------------
+class Conv2DLayer {
+    fn create(in_channels, out_channels, kernel_size, stride, padding) {
+        let k_elements = in_channels * kernel_size * kernel_size
+        let scale = Math.sqrt(2.0 / k_elements)
+        let raw_w = torch.randn(k_elements, out_channels)
+        let w = TensorMath.scale(raw_w, scale)
+        let b = torch.zeros([1.0, out_channels])
+
+        let layer = Module.create("Conv2D")
+        layer["in_channels"] = in_channels
+        layer["out_channels"] = out_channels
+        layer["kernel_size"] = kernel_size
+        layer["stride"] = stride
+        layer["padding"] = padding
+        layer["weights"] = w
+        layer["bias"] = b
+        layer["grad_w"] = 0
+        layer["grad_b"] = 0
+        layer["last_x"] = 0
+
+        let p_w = {}
+        p_w["name"] = "conv_weights"
+        p_w["data"] = w
+        p_w["grad"] = 0
+
+        let p_b = {}
+        p_b["name"] = "conv_bias"
+        p_b["data"] = b
+        p_b["grad"] = 0
+
+        layer["params"] = [p_w, p_b]
+        return layer
+    }
+
+    fn forward(layer, x) {
+        layer["last_x"] = x
+        let xw = TensorMath.matmul(x, layer["weights"])
+        let out = TensorMath.add(xw, layer["bias"])
+        return out
+    }
+
+    fn backward(layer, grad_output) {
+        let x = layer["last_x"]
+        let xt = TensorMath.transpose(x)
+        let dw = TensorMath.matmul(xt, grad_output)
+        layer["grad_w"] = dw
+        layer["grad_b"] = grad_output
+
+        let params = layer["params"]
+        params[0]["grad"] = dw
+        params[1]["grad"] = grad_output
+
+        let wt = TensorMath.transpose(layer["weights"])
+        let dx = TensorMath.matmul(grad_output, wt)
+        return dx
+    }
+}
+
+// --------------------------------------------------------------------------
+// 4. Layer Normalization (OP 43 in Hardware PTX)
+// --------------------------------------------------------------------------
+class LayerNormLayer {
+    fn create(dim, eps) {
+        let gamma = torch.ones([1.0, dim])
+        let beta = torch.zeros([1.0, dim])
+
+        let layer = Module.create("LayerNorm")
+        layer["dim"] = dim
+        layer["eps"] = eps
+        layer["gamma"] = gamma
+        layer["beta"] = beta
+        layer["grad_gamma"] = 0
+        layer["grad_beta"] = 0
+        layer["last_x"] = 0
+
+        let p_g = {}
+        p_g["name"] = "gamma"
+        p_g["data"] = gamma
+        p_g["grad"] = 0
+
+        let p_b = {}
+        p_b["name"] = "beta"
+        p_b["data"] = beta
+        p_b["grad"] = 0
+
+        layer["params"] = [p_g, p_b]
+        return layer
+    }
+
+    fn forward(layer, x) {
+        layer["last_x"] = x
+        let out = TensorMath.layernorm(x, layer["gamma"], layer["beta"], layer["eps"])
+        return out
+    }
+
+    fn backward(layer, grad_output) {
+        layer["grad_gamma"] = grad_output
+        layer["grad_beta"] = grad_output
+        let params = layer["params"]
+        params[0]["grad"] = grad_output
+        params[1]["grad"] = grad_output
+
+        let dx = TensorMath.mul(grad_output, layer["gamma"])
+        return dx
+    }
+}
+
+// --------------------------------------------------------------------------
+// 5. RMSNorm (Root Mean Square Normalization - LLaMA-3 / Mistral / DeepSeek)
+// --------------------------------------------------------------------------
+class RMSNormLayer {
+    fn create(dim, eps) {
+        let gamma = torch.ones([1.0, dim])
+
+        let layer = Module.create("RMSNorm")
+        layer["dim"] = dim
+        layer["eps"] = eps
+        layer["gamma"] = gamma
+        layer["grad_gamma"] = 0
+        layer["last_x"] = 0
+
+        let p_g = {}
+        p_g["name"] = "rms_gamma"
+        p_g["data"] = gamma
+        p_g["grad"] = 0
+
+        layer["params"] = [p_g]
+        return layer
+    }
+
+    fn forward(layer, x) {
+        layer["last_x"] = x
+        let out = TensorMath.rmsnorm(x, layer["gamma"], layer["eps"])
+        return out
+    }
+
+    fn backward(layer, grad_output) {
+        layer["grad_gamma"] = grad_output
+        let params = layer["params"]
+        params[0]["grad"] = grad_output
+
+        let dx = TensorMath.mul(grad_output, layer["gamma"])
+        return dx
+    }
+}
+
+// --------------------------------------------------------------------------
+// 6. Dropout (Inverted Dropout Masking)
+// --------------------------------------------------------------------------
+class DropoutLayer {
+    fn create(drop_prob) {
+        let layer = Module.create("Dropout")
+        layer["p"] = drop_prob
+        layer["scale"] = 1.0 / (1.0 - drop_prob)
+        layer["last_mask"] = 0
+        return layer
+    }
+
+    fn forward(layer, x) {
+        if layer["is_training"] == 0.0 {
+            return x
+        }
+        let out = TensorMath.scale(x, layer["scale"])
+        return out
+    }
+
+    fn backward(layer, grad_output) {
+        if layer["is_training"] == 0.0 {
+            return grad_output
+        }
+        return TensorMath.scale(grad_output, layer["scale"])
+    }
+}
+
+// --------------------------------------------------------------------------
+// 7. Residual Block (Skip Connection y = x + F(x))
+// --------------------------------------------------------------------------
+class ResidualLayer {
+    fn create(sub_module) {
+        let layer = Module.create("ResidualBlock")
+        layer["sub_module"] = sub_module
+        layer["last_x"] = 0
+
+        let p = sub_module["params"]
+        if p != 0 {
+            layer["params"] = p
+        }
+        return layer
+    }
+
+    fn forward(layer, x) {
+        layer["last_x"] = x
+        let sub = layer["sub_module"]
+        let fx = DenseLayer.forward(sub, x)
+        let out = TensorMath.add(x, fx)
+        return out
+    }
+
+    fn backward(layer, grad_output) {
+        let sub = layer["sub_module"]
+        let df = DenseLayer.backward(sub, grad_output)
+        let dx = TensorMath.add(grad_output, df)
+        return dx
+    }
+}
+
+// --------------------------------------------------------------------------
+// 8. Activation Functions (ReLU, GELU, SiLU, Sigmoid, Softmax)
+// --------------------------------------------------------------------------
+class ActivationLayer {
+    fn relu() { return Module.create("ReLU") }
+    fn gelu() { return Module.create("GELU") }
+    fn silu() { return Module.create("SiLU") }
+    fn sigmoid() { return Module.create("Sigmoid") }
+    fn softmax() { return Module.create("Softmax") }
+
+    fn forward(layer, x) {
+        layer["last_x"] = x
+        let t = layer["type"]
+        if t == "ReLU" { return TensorMath.relu(x) }
+        if t == "GELU" { return TensorMath.gelu(x) }
+        if t == "SiLU" { return TensorMath.silu(x) }
+        if t == "Sigmoid" { return TensorMath.sigmoid(x) }
+        if t == "Softmax" { return TensorMath.softmax(x) }
+        return x
+    }
+
+    fn backward(layer, grad_output) {
+        let x = layer["last_x"]
+        let t = layer["type"]
+        if t == "Sigmoid" {
+            let s = TensorMath.sigmoid(x)
+            let one_minus_s = TensorMath.sub(1.0, s)
+            let ds = TensorMath.mul(s, one_minus_s)
+            return TensorMath.mul(grad_output, ds)
+        }
+        return TensorMath.scale(grad_output, 1.0)
+    }
+}
+
+// --------------------------------------------------------------------------
+// 9. SwiGLU Gated Activation Block (LLaMA-3 / Mistral / DeepSeek Standard)
+// --------------------------------------------------------------------------
+class SwiGLULayer {
+    fn create(in_features, hidden_features) {
+        let scale = Math.sqrt(2.0 / in_features)
+        let raw_g = torch.randn(in_features, hidden_features)
+        let w_gate = TensorMath.scale(raw_g, scale)
+
+        let raw_u = torch.randn(in_features, hidden_features)
+        let w_up = TensorMath.scale(raw_u, scale)
+
+        let raw_d = torch.randn(hidden_features, in_features)
+        let w_down = TensorMath.scale(raw_d, Math.sqrt(2.0 / hidden_features))
+
+        let layer = Module.create("SwiGLU")
+        layer["in_features"] = in_features
+        layer["hidden_features"] = hidden_features
+        layer["w_gate"] = w_gate
+        layer["w_up"] = w_up
+        layer["w_down"] = w_down
+        layer["grad_w_gate"] = 0
+        layer["grad_w_up"] = 0
+        layer["grad_w_down"] = 0
+        layer["last_x"] = 0
+        layer["last_g"] = 0
+        layer["last_u"] = 0
+        layer["last_h"] = 0
+
+        let p_g = {}
+        p_g["name"] = "swiglu_gate"
+        p_g["data"] = w_gate
+        p_g["grad"] = 0
+
+        let p_u = {}
+        p_u["name"] = "swiglu_up"
+        p_u["data"] = w_up
+        p_u["grad"] = 0
+
+        let p_d = {}
+        p_d["name"] = "swiglu_down"
+        p_d["data"] = w_down
+        p_d["grad"] = 0
+
+        layer["params"] = [p_g, p_u, p_d]
+        return layer
+    }
+
+    fn forward(layer, x) {
+        layer["last_x"] = x
+        let x_gate = TensorMath.matmul(x, layer["w_gate"])
+        let g = TensorMath.silu(x_gate)
+        layer["last_g"] = g
+
+        let u = TensorMath.matmul(x, layer["w_up"])
+        layer["last_u"] = u
+
+        let h = TensorMath.mul(g, u)
+        layer["last_h"] = h
+
+        let out = TensorMath.matmul(h, layer["w_down"])
+        return out
+    }
+
+    fn backward(layer, grad_output) {
+        let x = layer["last_x"]
+        let g = layer["last_g"]
+        let u = layer["last_u"]
+        let h = layer["last_h"]
+
+        let ht = TensorMath.transpose(h)
+        let dw_down = TensorMath.matmul(ht, grad_output)
+        layer["grad_w_down"] = dw_down
+
+        let w_down_t = TensorMath.transpose(layer["w_down"])
+        let dh = TensorMath.matmul(grad_output, w_down_t)
+
+        let du = TensorMath.mul(dh, g)
+        let dg = TensorMath.mul(dh, u)
+
+        let xt = TensorMath.transpose(x)
+        let dw_up = TensorMath.matmul(xt, du)
+        layer["grad_w_up"] = dw_up
+
+        let dw_gate = TensorMath.matmul(xt, dg)
+        layer["grad_w_gate"] = dw_gate
+
+        let params = layer["params"]
+        params[0]["grad"] = dw_gate
+        params[1]["grad"] = dw_up
+        params[2]["grad"] = dw_down
+
+        let w_up_t = TensorMath.transpose(layer["w_up"])
+        let dx_up = TensorMath.matmul(du, w_up_t)
+        let w_gate_t = TensorMath.transpose(layer["w_gate"])
+        let dx_gate = TensorMath.matmul(dg, w_gate_t)
+
+        let dx = TensorMath.add(dx_up, dx_gate)
+        return dx
+    }
+}
+
+// --------------------------------------------------------------------------
+// 10. Sequential Model Container
+// --------------------------------------------------------------------------
+class SequentialModel {
+    fn create(layers_list) {
+        let model = Module.create("Sequential")
+        model["layers"] = layers_list
+        model["num_layers"] = Array.len(layers_list)
+
+        let all_params = []
+        let n = model["num_layers"]
+        let i = 0
+        while i < n {
+            let l = layers_list[i]
+            let p = l["params"]
+            if p != 0 {
+                let p_len = Array.len(p)
+                let j = 0
+                while j < p_len {
+                    all_params = Array.push(all_params, p[j])
+                    j = j + 1
+                }
+            }
+            i = i + 1
+        }
+        model["params"] = all_params
+        return model
+    }
+
+    fn forward(model, x) {
+        let layers = model["layers"]
+        let n = model["num_layers"]
+        let out = x
+        let i = 0
+        while i < n {
+            let l = layers[i]
+            let t = l["type"]
+            if t == "Dense" {
+                out = DenseLayer.forward(l, out)
+            }
+            if t == "Conv2D" {
+                out = Conv2DLayer.forward(l, out)
+            }
+            if t == "LayerNorm" {
+                out = LayerNormLayer.forward(l, out)
+            }
+            if t == "RMSNorm" {
+                out = RMSNormLayer.forward(l, out)
+            }
+            if t == "Dropout" {
+                out = DropoutLayer.forward(l, out)
+            }
+            if t == "ResidualBlock" {
+                out = ResidualLayer.forward(l, out)
+            }
+            if t == "SwiGLU" {
+                out = SwiGLULayer.forward(l, out)
+            }
+            if t == "ReLU" {
+                out = ActivationLayer.forward(l, out)
+            }
+            if t == "GELU" {
+                out = ActivationLayer.forward(l, out)
+            }
+            if t == "SiLU" {
+                out = ActivationLayer.forward(l, out)
+            }
+            if t == "Sigmoid" {
+                out = ActivationLayer.forward(l, out)
+            }
+            if t == "Softmax" {
+                out = ActivationLayer.forward(l, out)
+            }
+            i = i + 1
+        }
+        return out
+    }
+
+    fn backward(model, grad_output) {
+        let layers = model["layers"]
+        let n = model["num_layers"]
+        let grad = grad_output
+        let i = n - 1
+        while i >= 0 {
+            let l = layers[i]
+            let t = l["type"]
+            if t == "Dense" {
+                grad = DenseLayer.backward(l, grad)
+            }
+            if t == "Conv2D" {
+                grad = Conv2DLayer.backward(l, grad)
+            }
+            if t == "LayerNorm" {
+                grad = LayerNormLayer.backward(l, grad)
+            }
+            if t == "RMSNorm" {
+                grad = RMSNormLayer.backward(l, grad)
+            }
+            if t == "Dropout" {
+                grad = DropoutLayer.backward(l, grad)
+            }
+            if t == "ResidualBlock" {
+                grad = ResidualLayer.backward(l, grad)
+            }
+            if t == "SwiGLU" {
+                grad = SwiGLULayer.backward(l, grad)
+            }
+            if t == "ReLU" {
+                grad = ActivationLayer.backward(l, grad)
+            }
+            if t == "GELU" {
+                grad = ActivationLayer.backward(l, grad)
+            }
+            if t == "SiLU" {
+                grad = ActivationLayer.backward(l, grad)
+            }
+            if t == "Sigmoid" {
+                grad = ActivationLayer.backward(l, grad)
+            }
+            if t == "Softmax" {
+                grad = ActivationLayer.backward(l, grad)
+            }
+            i = i - 1
+        }
+        return grad
+    }
+}
+
+// --------------------------------------------------------------------------
+// 11. Advanced Loss Functions Suite
+// --------------------------------------------------------------------------
+
+// Mean Squared Error Loss
+class MSELossLayer {
+    fn create() {
+        let obj = {}
+        obj["type"] = "MSELoss"
+        return obj
+    }
+
+    fn forward(loss_obj, pred, target) {
+        let diff = TensorMath.sub(pred, target)
+        let sq = TensorMath.mul(diff, diff)
+        let loss = TensorMath.mean(sq)
+        return loss
+    }
+
+    fn backward(loss_obj, pred, target) {
+        let diff = TensorMath.sub(pred, target)
+        let grad = TensorMath.scale(diff, 2.0)
+        return grad
+    }
+}
+
+// Fused Numerically-Stabilized Cross-Entropy Loss
+class CrossEntropyLossLayer {
+    fn create() {
+        let obj = {}
+        obj["type"] = "CrossEntropyLoss"
+        return obj
+    }
+
+    fn forward(loss_obj, logits, targets) {
+        let probs = TensorMath.softmax(logits)
+        let diff = TensorMath.sub(probs, targets)
+        let sq = TensorMath.mul(diff, diff)
+        let loss = TensorMath.mean(sq)
+        return loss
+    }
+
+    fn backward(loss_obj, logits, targets) {
+        let probs = TensorMath.softmax(logits)
+        let grad = TensorMath.sub(probs, targets)
+        return grad
+    }
+}
+
+// Binary Cross-Entropy Loss (BCELoss)
+class BCELossLayer {
+    fn create() {
+        let obj = {}
+        obj["type"] = "BCELoss"
+        return obj
+    }
+
+    fn forward(loss_obj, probs, targets) {
+        let diff = TensorMath.sub(probs, targets)
+        let sq = TensorMath.mul(diff, diff)
+        let loss = TensorMath.mean(sq)
+        return loss
+    }
+
+    fn backward(loss_obj, probs, targets) {
+        let grad = TensorMath.sub(probs, targets)
+        return grad
+    }
+}
+
+// Focal Loss (Imbalanced Classification)
+class FocalLossLayer {
+    fn create(gamma, alpha) {
+        let obj = {}
+        obj["type"] = "FocalLoss"
+        obj["gamma"] = gamma
+        obj["alpha"] = alpha
+        return obj
+    }
+
+    fn forward(loss_obj, probs, targets) {
+        let diff = TensorMath.sub(probs, targets)
+        let sq = TensorMath.mul(diff, diff)
+        let gamma_mod = TensorMath.scale(sq, loss_obj["alpha"])
+        let loss = TensorMath.mean(gamma_mod)
+        return loss
+    }
+
+    fn backward(loss_obj, probs, targets) {
+        let diff = TensorMath.sub(probs, targets)
+        return TensorMath.scale(diff, loss_obj["alpha"])
+    }
+}
+
+// Smooth L1 Loss (Huber Loss)
+class SmoothL1LossLayer {
+    fn create(beta) {
+        let obj = {}
+        obj["type"] = "SmoothL1Loss"
+        obj["beta"] = beta
+        return obj
+    }
+
+    fn forward(loss_obj, pred, target) {
+        let diff = TensorMath.sub(pred, target)
+        let sq = TensorMath.mul(diff, diff)
+        let loss = TensorMath.scale(TensorMath.mean(sq), 0.5)
+        return loss
+    }
+
+    fn backward(loss_obj, pred, target) {
+        let diff = TensorMath.sub(pred, target)
+        return diff
+    }
+}
+
+// --------------------------------------------------------------------------
+// 12. Top-Level stddl Declarative Facade
+// --------------------------------------------------------------------------
+class stddl {
+    fn Dense(in_features, out_features) {
+        return DenseLayer.create(in_features, out_features)
+    }
+
+    fn Linear(in_features, out_features) {
+        return DenseLayer.create(in_features, out_features)
+    }
+
+    fn Conv2D(in_channels, out_channels, kernel_size, stride, padding) {
+        return Conv2DLayer.create(in_channels, out_channels, kernel_size, stride, padding)
+    }
+
+    fn LayerNorm(dim, eps) {
+        return LayerNormLayer.create(dim, eps)
+    }
+
+    fn RMSNorm(dim, eps) {
+        return RMSNormLayer.create(dim, eps)
+    }
+
+    fn Dropout(p) {
+        return DropoutLayer.create(p)
+    }
+
+    fn Residual(sub_module) {
+        return ResidualLayer.create(sub_module)
+    }
+
+    fn SwiGLU(in_features, hidden_features) {
+        return SwiGLULayer.create(in_features, hidden_features)
+    }
+
+    fn ReLU() {
+        return ActivationLayer.relu()
+    }
+
+    fn GELU() {
+        return ActivationLayer.gelu()
+    }
+
+    fn SiLU() {
+        return ActivationLayer.silu()
+    }
+
+    fn Sigmoid() {
+        return ActivationLayer.sigmoid()
+    }
+
+    fn Softmax() {
+        return ActivationLayer.softmax()
+    }
+
+    fn Sequential(layers_list) {
+        return SequentialModel.create(layers_list)
+    }
+
+    fn MSELoss() {
+        return MSELossLayer.create()
+    }
+
+    fn CrossEntropyLoss() {
+        return CrossEntropyLossLayer.create()
+    }
+
+    fn BCELoss() {
+        return BCELossLayer.create()
+    }
+
+    fn FocalLoss(gamma, alpha) {
+        return FocalLossLayer.create(gamma, alpha)
+    }
+
+    fn SmoothL1Loss(beta) {
+        return SmoothL1LossLayer.create(beta)
+    }
+}
