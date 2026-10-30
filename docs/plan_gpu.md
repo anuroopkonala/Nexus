@@ -1,7 +1,7 @@
 # Nexus Baremetal - Pure Assembly GPU Optimization Plan & Empirical Results
 
 > **Core Constraint**: **100% Pure Assembly**. No C, No C++, No CUDA C (`nvcc`), No external runtimes (`cudart`). The entire subsystem consists exclusively of hand-crafted x86-64 assembly in `src/vm/nexus_gpu.s` interfacing directly with the Windows NVIDIA Driver API (`nvcuda.dll`) and hardware PTX ISA assembly templates.
-> **Isolation Status**: Strictly confined to `nexus_staging`. Original directory `nexus_baremetal` remains untouched.
+> **Integration Status**: Fully integrated into production `nexus_baremetal` core (`src/vm/nexus_gpu.s`). Zero external runtimes.
 
 ---
 

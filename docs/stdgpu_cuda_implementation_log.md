@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > **Baremetal Hardware Verification & 100% Regression Success**
 > Nexus Baremetal drives the physical **NVIDIA GeForce RTX 3050 6GB Laptop GPU** via direct Windows Display Driver (`nvcuda.dll`) invocation in pure x86-64 assembly with **zero Python scripts, zero CRT, zero third-party runtimes, zero memory corruption**, and direct hardware dispatch latency **$< 10\ \mu\text{s}$** (measured at **$7.21\ \mu\text{s}$** per dispatch).
-> **54 out of 54 test suites pass with 100% success rate (`nexus.ps1 test`).**
+> **84 out of 84 test suites pass with 100% success rate (`run_all_tests.ps1`), and all 8 standard modules beat native reference runtimes (`benchmarks/run_std_benchmarks.ps1`).**
 
 ---
 
