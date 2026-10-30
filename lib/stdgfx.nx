@@ -605,6 +605,7 @@ class FrameBuffer {
 
         let y = 0
         while y < h {
+            let row = ""
             let x = 0
             while x < w {
                 let c = FrameBuffer.get_pixel(fb, x, y)
@@ -616,10 +617,10 @@ class FrameBuffer {
                 let ig = Math.floor(corrected["g"] * 255.0)
                 let ib = Math.floor(corrected["b"] * 255.0)
 
-                content = content + to_string(ir) + " " + to_string(ig) + " " + to_string(ib) + " "
+                row = row + to_string(ir) + " " + to_string(ig) + " " + to_string(ib) + " "
                 x = x + 1
             }
-            content = content + "\n"
+            content = content + row + "\n"
             y = y + 1
         }
         File.write_text(filepath, content)

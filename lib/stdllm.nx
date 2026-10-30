@@ -75,7 +75,7 @@ class LLMTensorMath {
 class llm_torch {
     fn zeros(shape) { return LLMTensorOps.create(shape, 0.0) }
     fn ones(shape) { return LLMTensorOps.create(shape, 1.0) }
-    fn randn(rows, cols) { return gpu_dispatch(67.0, [rows, cols, 42.0]) }
+    fn randn(rows, cols) { return gpu_dispatch(67.0, [rows * 1.0, cols * 1.0, 42.0]) }
 }
 
 // --------------------------------------------------------------------------
@@ -841,9 +841,789 @@ class LLMDeepSeekMoEModel {
 }
 
 // --------------------------------------------------------------------------
-// 13. Universal Dot-Syntax Facade: stdllm
+// 14. LLM Mathematical Utilities: Natural Logarithm, Exponential & Sigmoid
+// --------------------------------------------------------------------------
+class LLMMathUtils {
+    fn exp(mu_u) {
+        if mu_u < -40.0 { return 0.0 }
+        if mu_u > 40.0 { return 235385266837019985408.0 }
+        return Math.pow(2.718281828459045, mu_u)
+    }
+
+    fn ln(mu_x) {
+        if mu_x <= 0.0 { return -999999.0 }
+        let mu_e = 2.718281828459045
+        let mu_k = 0.0
+        let mu_cur = mu_x
+        while mu_cur > 1.5 {
+            mu_cur = mu_cur / mu_e
+            mu_k = mu_k + 1.0
+        }
+        while mu_cur < 0.6 {
+            mu_cur = mu_cur * mu_e
+            mu_k = mu_k - 1.0
+        }
+        let mu_u = (mu_cur - 1.0) / (mu_cur + 1.0)
+        let mu_u2 = mu_u * mu_u
+        let mu_term = mu_u
+        let mu_sum = mu_u
+        let mu_denom = 3.0
+        while mu_denom <= 15.0 {
+            mu_term = mu_term * mu_u2
+            mu_sum = mu_sum + (mu_term / mu_denom)
+            mu_denom = mu_denom + 2.0
+        }
+        return (2.0 * mu_sum) + mu_k
+    }
+
+    fn sigmoid(mu_z) {
+        if mu_z >= 30.0 { return 1.0 }
+        if mu_z <= -30.0 { return 0.0 }
+        return 1.0 / (1.0 + LLMMathUtils.exp(0.0 - mu_z))
+    }
+}
+
+// --------------------------------------------------------------------------
+// 15. Conversational Templates: ChatML, LLaMA-3 Instruct, Mistral
+// --------------------------------------------------------------------------
+class LLMChatTemplate {
+    fn create(ct_format) {
+        let ct_obj = {}
+        ct_obj["type"] = "ChatTemplate"
+        ct_obj["format"] = ct_format
+        return ct_obj
+    }
+
+    fn format_messages(ct_self, ct_msgs) {
+        let ct_fmt = ct_self["format"]
+        let ct_out = ""
+        let ct_n = len(ct_msgs)
+        let ct_i = 0
+
+        if ct_fmt == "chatml" {
+            while ct_i < ct_n {
+                let ct_m = ct_msgs[ct_i]
+                ct_out = ct_out + "<|im_start|>" + ct_m["role"] + "\n" + ct_m["content"] + "<|im_end|>\n"
+                ct_i = ct_i + 1
+            }
+            let ct_last = ct_msgs[ct_n - 1]
+            if ct_last["role"] != "assistant" {
+                ct_out = ct_out + "<|im_start|>assistant\n"
+            }
+            return ct_out
+        }
+
+        if ct_fmt == "llama3" {
+            ct_out = "<|begin_of_text|>"
+            while ct_i < ct_n {
+                let ct_m = ct_msgs[ct_i]
+                ct_out = ct_out + "<|start_header_id|>" + ct_m["role"] + "<|end_header_id|>\n\n" + ct_m["content"] + "<|eot_id|>"
+                ct_i = ct_i + 1
+            }
+            let ct_last = ct_msgs[ct_n - 1]
+            if ct_last["role"] != "assistant" {
+                ct_out = ct_out + "<|start_header_id|>assistant<|end_header_id|>\n\n"
+            }
+            return ct_out
+        }
+
+        if ct_fmt == "mistral" {
+            let ct_sys = ""
+            let ct_user = ""
+            let ct_asst = ""
+            while ct_i < ct_n {
+                let ct_m = ct_msgs[ct_i]
+                let ct_r = ct_m["role"]
+                if ct_r == "system" { ct_sys = ct_m["content"] }
+                if ct_r == "user" { ct_user = ct_m["content"] }
+                if ct_r == "assistant" { ct_asst = ct_m["content"] }
+                ct_i = ct_i + 1
+            }
+            ct_out = "<s>[INST] "
+            if len(ct_sys) > 0 {
+                ct_out = ct_out + "<<SYS>>\n" + ct_sys + "\n<</SYS>>\n\n"
+            }
+            ct_out = ct_out + ct_user + " [/INST]"
+            if len(ct_asst) > 0 {
+                ct_out = ct_out + " " + ct_asst + "</s>"
+            }
+            return ct_out
+        }
+
+        while ct_i < ct_n {
+            let ct_m = ct_msgs[ct_i]
+            ct_out = ct_out + ct_m["role"] + ": " + ct_m["content"] + "\n"
+            ct_i = ct_i + 1
+        }
+        return ct_out
+    }
+
+    fn create_sft_mask(ct_self, ct_prompt_len, ct_total_len) {
+        let ct_mask = []
+        let ct_i = 0
+        while ct_i < ct_prompt_len {
+            ct_mask = Array.push(ct_mask, 0.0)
+            ct_i = ct_i + 1
+        }
+        while ct_i < ct_total_len {
+            ct_mask = Array.push(ct_mask, 1.0)
+            ct_i = ct_i + 1
+        }
+        return ct_mask
+    }
+}
+
+// --------------------------------------------------------------------------
+// 16. Causal Language Model (CLM) Loss & Causal Attention Mask
+// --------------------------------------------------------------------------
+class LLMCausalLoss {
+    fn create(cl_vocab_size) {
+        let cl_obj = {}
+        cl_obj["type"] = "CausalLoss"
+        cl_obj["vocab_size"] = cl_vocab_size
+        return cl_obj
+    }
+
+    fn create_causal_mask(cl_self, cl_seq_len) {
+        let cl_arr = []
+        let cl_row = 0
+        while cl_row < cl_seq_len {
+            let cl_col = 0
+            while cl_col < cl_seq_len {
+                if cl_col <= cl_row {
+                    cl_arr = Array.push(cl_arr, 0.0)
+                } else {
+                    cl_arr = Array.push(cl_arr, -10000.0)
+                }
+                cl_col = cl_col + 1
+            }
+            cl_row = cl_row + 1
+        }
+        return LLMTensorOps.from_array([cl_seq_len, cl_seq_len], cl_arr)
+    }
+
+    fn forward(cl_self, cl_logits, cl_targets) {
+        let cl_sh = LLMTensorOps.shape(cl_logits)
+        let cl_n = cl_sh[0]
+        let cl_v = cl_sh[1]
+        let cl_arr = LLMTensorOps.to_array(cl_logits)
+
+        let cl_total = 0.0
+        let cl_i = 0
+        while cl_i < cl_n {
+            let cl_row_base = cl_i * cl_v
+            let cl_max = cl_arr[cl_row_base]
+            let cl_j = 1
+            while cl_j < cl_v {
+                let cl_val = cl_arr[cl_row_base + cl_j]
+                if cl_val > cl_max { cl_max = cl_val }
+                cl_j = cl_j + 1
+            }
+            let cl_sum_exp = 0.0
+            cl_j = 0
+            while cl_j < cl_v {
+                cl_sum_exp = cl_sum_exp + LLMMathUtils.exp(cl_arr[cl_row_base + cl_j] - cl_max)
+                cl_j = cl_j + 1
+            }
+            let cl_lse = LLMMathUtils.ln(cl_sum_exp) + cl_max
+            let cl_tgt = cl_targets[cl_i]
+            let cl_tgt_val = cl_arr[cl_row_base + cl_tgt]
+            cl_total = cl_total + (cl_lse - cl_tgt_val)
+            cl_i = cl_i + 1
+        }
+        return cl_total / cl_n
+    }
+
+    fn backward(cl_self, cl_logits, cl_targets) {
+        let cl_sh = LLMTensorOps.shape(cl_logits)
+        let cl_n = cl_sh[0]
+        let cl_v = cl_sh[1]
+        let cl_arr = LLMTensorOps.to_array(cl_logits)
+        let cl_grad = []
+        let cl_scale = 1.0 / cl_n
+
+        let cl_i = 0
+        while cl_i < cl_n {
+            let cl_row_base = cl_i * cl_v
+            let cl_max = cl_arr[cl_row_base]
+            let cl_j = 1
+            while cl_j < cl_v {
+                let cl_val = cl_arr[cl_row_base + cl_j]
+                if cl_val > cl_max { cl_max = cl_val }
+                cl_j = cl_j + 1
+            }
+            let cl_sum_exp = 0.0
+            cl_j = 0
+            while cl_j < cl_v {
+                cl_sum_exp = cl_sum_exp + LLMMathUtils.exp(cl_arr[cl_row_base + cl_j] - cl_max)
+                cl_j = cl_j + 1
+            }
+            let cl_tgt = cl_targets[cl_i]
+            cl_j = 0
+            while cl_j < cl_v {
+                let cl_p = LLMMathUtils.exp(cl_arr[cl_row_base + cl_j] - cl_max) / cl_sum_exp
+                let cl_tgt_sub = 0.0
+                if cl_j == cl_tgt { cl_tgt_sub = 1.0 }
+                cl_grad = Array.push(cl_grad, (cl_p - cl_tgt_sub) * cl_scale)
+                cl_j = cl_j + 1
+            }
+            cl_i = cl_i + 1
+        }
+        return LLMTensorOps.from_array([cl_n, cl_v], cl_grad)
+    }
+}
+
+// --------------------------------------------------------------------------
+// 17. Supervised Fine-Tuning (SFT) Completion-Only Loss & Gradients
+// --------------------------------------------------------------------------
+class LLMSFTLoss {
+    fn create(sft_vocab_size) {
+        let sft_obj = {}
+        sft_obj["type"] = "SFTLoss"
+        sft_obj["vocab_size"] = sft_vocab_size
+        return sft_obj
+    }
+
+    fn forward(sft_self, sft_logits, sft_targets, sft_mask) {
+        let sft_sh = LLMTensorOps.shape(sft_logits)
+        let sft_n = sft_sh[0]
+        let sft_v = sft_sh[1]
+        let sft_arr = LLMTensorOps.to_array(sft_logits)
+
+        let sft_total = 0.0
+        let sft_active_count = 0.0
+        let sft_i = 0
+        while sft_i < sft_n {
+            if sft_mask[sft_i] > 0.5 {
+                sft_active_count = sft_active_count + 1.0
+                let sft_row_base = sft_i * sft_v
+                let sft_max = sft_arr[sft_row_base]
+                let sft_j = 1
+                while sft_j < sft_v {
+                    let sft_val = sft_arr[sft_row_base + sft_j]
+                    if sft_val > sft_max { sft_max = sft_val }
+                    sft_j = sft_j + 1
+                }
+                let sft_sum_exp = 0.0
+                sft_j = 0
+                while sft_j < sft_v {
+                    sft_sum_exp = sft_sum_exp + LLMMathUtils.exp(sft_arr[sft_row_base + sft_j] - sft_max)
+                    sft_j = sft_j + 1
+                }
+                let sft_lse = LLMMathUtils.ln(sft_sum_exp) + sft_max
+                let sft_tgt = sft_targets[sft_i]
+                let sft_tgt_val = sft_arr[sft_row_base + sft_tgt]
+                sft_total = sft_total + (sft_lse - sft_tgt_val)
+            }
+            sft_i = sft_i + 1
+        }
+        if sft_active_count == 0.0 { return 0.0 }
+        return sft_total / sft_active_count
+    }
+
+    fn backward(sft_self, sft_logits, sft_targets, sft_mask) {
+        let sft_sh = LLMTensorOps.shape(sft_logits)
+        let sft_n = sft_sh[0]
+        let sft_v = sft_sh[1]
+        let sft_arr = LLMTensorOps.to_array(sft_logits)
+        let sft_grad = []
+
+        let sft_active_count = 0.0
+        let sft_c = 0
+        while sft_c < sft_n {
+            if sft_mask[sft_c] > 0.5 {
+                sft_active_count = sft_active_count + 1.0
+            }
+            sft_c = sft_c + 1
+        }
+        if sft_active_count == 0.0 { sft_active_count = 1.0 }
+        let sft_scale = 1.0 / sft_active_count
+
+        let sft_i = 0
+        while sft_i < sft_n {
+            let sft_row_base = sft_i * sft_v
+            if sft_mask[sft_i] <= 0.5 {
+                let sft_j = 0
+                while sft_j < sft_v {
+                    sft_grad = Array.push(sft_grad, 0.0)
+                    sft_j = sft_j + 1
+                }
+            } else {
+                let sft_max = sft_arr[sft_row_base]
+                let sft_j = 1
+                while sft_j < sft_v {
+                    let sft_val = sft_arr[sft_row_base + sft_j]
+                    if sft_val > sft_max { sft_max = sft_val }
+                    sft_j = sft_j + 1
+                }
+                let sft_sum_exp = 0.0
+                sft_j = 0
+                while sft_j < sft_v {
+                    sft_sum_exp = sft_sum_exp + LLMMathUtils.exp(sft_arr[sft_row_base + sft_j] - sft_max)
+                    sft_j = sft_j + 1
+                }
+                let sft_tgt = sft_targets[sft_i]
+                sft_j = 0
+                while sft_j < sft_v {
+                    let sft_p = LLMMathUtils.exp(sft_arr[sft_row_base + sft_j] - sft_max) / sft_sum_exp
+                    let sft_tgt_sub = 0.0
+                    if sft_j == sft_tgt { sft_tgt_sub = 1.0 }
+                    sft_grad = Array.push(sft_grad, (sft_p - sft_tgt_sub) * sft_scale)
+                    sft_j = sft_j + 1
+                }
+            }
+            sft_i = sft_i + 1
+        }
+        return LLMTensorOps.from_array([sft_n, sft_v], sft_grad)
+    }
+}
+
+// --------------------------------------------------------------------------
+// 18. Low-Rank Adaptation (LoRA) Linear Layer with Weight Merging
+// --------------------------------------------------------------------------
+class LLMLoRA {
+    fn create(lora_in_features, lora_out_features, lora_rank, lora_alpha) {
+        let lora_scale = 1.0 / Math.sqrt(lora_in_features)
+        let lora_raw_w0 = llm_torch.randn(lora_in_features, lora_out_features)
+        let lora_w0 = LLMTensorMath.scale(lora_raw_w0, lora_scale)
+
+        let lora_raw_a = llm_torch.randn(lora_in_features, lora_rank)
+        let lora_a = LLMTensorMath.scale(lora_raw_a, lora_scale)
+
+        let lora_b = LLMTensorOps.create([lora_rank * 1.0, lora_out_features * 1.0], 0.0)
+
+        let lora_obj = {}
+        lora_obj["type"] = "LoRA"
+        lora_obj["in_features"] = lora_in_features
+        lora_obj["out_features"] = lora_out_features
+        lora_obj["rank"] = lora_rank
+        lora_obj["alpha"] = lora_alpha
+        lora_obj["scaling"] = lora_alpha / lora_rank
+        lora_obj["w0"] = lora_w0
+        lora_obj["a"] = lora_a
+        lora_obj["b"] = lora_b
+        lora_obj["merged"] = false
+        lora_obj["w_merged"] = 0
+        lora_obj["grad_a"] = 0
+        lora_obj["grad_b"] = 0
+        return lora_obj
+    }
+
+    fn forward(lora_self, lora_x) {
+        if lora_self["merged"] == true {
+            return LLMTensorMath.matmul(lora_x, lora_self["w_merged"])
+        }
+        let lora_y_base = LLMTensorMath.matmul(lora_x, lora_self["w0"])
+        let lora_xa = LLMTensorMath.matmul(lora_x, lora_self["a"])
+        let lora_xb = LLMTensorMath.matmul(lora_xa, lora_self["b"])
+        let lora_scaled = LLMTensorMath.scale(lora_xb, lora_self["scaling"])
+        let lora_out = LLMTensorMath.add(lora_y_base, lora_scaled)
+        LLMTensorOps.free(lora_y_base)
+        LLMTensorOps.free(lora_xa)
+        LLMTensorOps.free(lora_xb)
+        LLMTensorOps.free(lora_scaled)
+        return lora_out
+    }
+
+    fn backward(lora_self, lora_x, lora_grad_out) {
+        let lora_s = lora_self["scaling"]
+        let lora_xa = LLMTensorMath.matmul(lora_x, lora_self["a"])
+        let lora_xa_t = LLMTensorMath.transpose(lora_xa)
+        let lora_raw_gb = LLMTensorMath.matmul(lora_xa_t, lora_grad_out)
+        let lora_gb = LLMTensorMath.scale(lora_raw_gb, lora_s)
+
+        let lora_b_t = LLMTensorMath.transpose(lora_self["b"])
+        let lora_grad_xa = LLMTensorMath.matmul(lora_grad_out, lora_b_t)
+        let lora_x_t = LLMTensorMath.transpose(lora_x)
+        let lora_raw_ga = LLMTensorMath.matmul(lora_x_t, lora_grad_xa)
+        let lora_ga = LLMTensorMath.scale(lora_raw_ga, lora_s)
+
+        let lora_w0_t = LLMTensorMath.transpose(lora_self["w0"])
+        let lora_gx_base = LLMTensorMath.matmul(lora_grad_out, lora_w0_t)
+
+        let lora_a_t = LLMTensorMath.transpose(lora_self["a"])
+        let lora_gx_lora_raw = LLMTensorMath.matmul(lora_grad_xa, lora_a_t)
+        let lora_gx_lora = LLMTensorMath.scale(lora_gx_lora_raw, lora_s)
+        let lora_grad_x = LLMTensorMath.add(lora_gx_base, lora_gx_lora)
+
+        if lora_self["grad_a"] != 0 { LLMTensorOps.free(lora_self["grad_a"]) }
+        if lora_self["grad_b"] != 0 { LLMTensorOps.free(lora_self["grad_b"]) }
+        lora_self["grad_a"] = lora_ga
+        lora_self["grad_b"] = lora_gb
+
+        LLMTensorOps.free(lora_xa)
+        LLMTensorOps.free(lora_xa_t)
+        LLMTensorOps.free(lora_raw_gb)
+        LLMTensorOps.free(lora_b_t)
+        LLMTensorOps.free(lora_grad_xa)
+        LLMTensorOps.free(lora_x_t)
+        LLMTensorOps.free(lora_raw_ga)
+        LLMTensorOps.free(lora_w0_t)
+        LLMTensorOps.free(lora_gx_base)
+        LLMTensorOps.free(lora_a_t)
+        LLMTensorOps.free(lora_gx_lora_raw)
+        LLMTensorOps.free(lora_gx_lora)
+        return lora_grad_x
+    }
+
+    fn step(lora_self, lora_lr) {
+        if lora_self["grad_a"] != 0 {
+            let lora_upd_a = LLMTensorMath.scale(lora_self["grad_a"], lora_lr)
+            let lora_new_a = LLMTensorMath.sub(lora_self["a"], lora_upd_a)
+            LLMTensorOps.free(lora_self["a"])
+            LLMTensorOps.free(lora_upd_a)
+            lora_self["a"] = lora_new_a
+        }
+        if lora_self["grad_b"] != 0 {
+            let lora_upd_b = LLMTensorMath.scale(lora_self["grad_b"], lora_lr)
+            let lora_new_b = LLMTensorMath.sub(lora_self["b"], lora_upd_b)
+            LLMTensorOps.free(lora_self["b"])
+            LLMTensorOps.free(lora_upd_b)
+            lora_self["b"] = lora_new_b
+        }
+        return true
+    }
+
+    fn merge_weights(lora_self) {
+        let lora_ab = LLMTensorMath.matmul(lora_self["a"], lora_self["b"])
+        let lora_scaled = LLMTensorMath.scale(lora_ab, lora_self["scaling"])
+        let lora_w_merged = LLMTensorMath.add(lora_self["w0"], lora_scaled)
+        LLMTensorOps.free(lora_ab)
+        LLMTensorOps.free(lora_scaled)
+        if lora_self["w_merged"] != 0 { LLMTensorOps.free(lora_self["w_merged"]) }
+        lora_self["w_merged"] = lora_w_merged
+        lora_self["merged"] = true
+        return lora_w_merged
+    }
+
+    fn unmerge_weights(lora_self) {
+        if lora_self["merged"] == true {
+            if lora_self["w_merged"] != 0 {
+                LLMTensorOps.free(lora_self["w_merged"])
+                lora_self["w_merged"] = 0
+            }
+            lora_self["merged"] = false
+        }
+        return true
+    }
+}
+
+// --------------------------------------------------------------------------
+// 19. 4-bit Quantized Low-Rank Adaptation (QLoRA) Layer
+// --------------------------------------------------------------------------
+class LLMQLoRA {
+    fn create(qlora_in_features, qlora_out_features, qlora_rank, qlora_alpha) {
+        let qlora_scale = 1.0 / Math.sqrt(qlora_in_features)
+        let qlora_raw_w0 = llm_torch.randn(qlora_in_features, qlora_out_features)
+        let qlora_w0 = LLMTensorMath.scale(qlora_raw_w0, qlora_scale)
+
+        // 4-bit block quantization (format 2.0 = Q4_0)
+        let qlora_w0_q4 = LLMTensorMath.quantize(qlora_w0, 2.0)
+        LLMTensorOps.free(qlora_w0)
+
+        let qlora_raw_a = llm_torch.randn(qlora_in_features, qlora_rank)
+        let qlora_a = LLMTensorMath.scale(qlora_raw_a, qlora_scale)
+        let qlora_b = LLMTensorOps.create([qlora_rank, qlora_out_features], 0.0)
+
+        let qlora_obj = {}
+        qlora_obj["type"] = "QLoRA"
+        qlora_obj["in_features"] = qlora_in_features
+        qlora_obj["out_features"] = qlora_out_features
+        qlora_obj["rank"] = qlora_rank
+        qlora_obj["alpha"] = qlora_alpha
+        qlora_obj["scaling"] = qlora_alpha / qlora_rank
+        qlora_obj["w0_q4"] = qlora_w0_q4
+        qlora_obj["a"] = qlora_a
+        qlora_obj["b"] = qlora_b
+        qlora_obj["grad_a"] = 0
+        qlora_obj["grad_b"] = 0
+        return qlora_obj
+    }
+
+    fn forward(qlora_self, qlora_x) {
+        let qlora_sh = LLMTensorOps.shape(qlora_x)
+        let qlora_m = qlora_sh[0]
+        let qlora_k = qlora_self["in_features"]
+        let qlora_n = qlora_self["out_features"]
+
+        // Quantized GEMM forward pass for base weights: format=2.0 (Q4_0)
+        let qlora_y_base = LLMTensorMath.quant_gemm(qlora_x, qlora_self["w0_q4"], 2.0, qlora_m, qlora_k, qlora_n)
+
+        // Full FP32 low-rank adapter path
+        let qlora_xa = LLMTensorMath.matmul(qlora_x, qlora_self["a"])
+        let qlora_xb = LLMTensorMath.matmul(qlora_xa, qlora_self["b"])
+        let qlora_scaled = LLMTensorMath.scale(qlora_xb, qlora_self["scaling"])
+        let qlora_out = LLMTensorMath.add(qlora_y_base, qlora_scaled)
+
+        LLMTensorOps.free(qlora_y_base)
+        LLMTensorOps.free(qlora_xa)
+        LLMTensorOps.free(qlora_xb)
+        LLMTensorOps.free(qlora_scaled)
+        return qlora_out
+    }
+
+    fn backward(qlora_self, qlora_x, qlora_grad_out) {
+        let qlora_s = qlora_self["scaling"]
+        let qlora_xa = LLMTensorMath.matmul(qlora_x, qlora_self["a"])
+        let qlora_xa_t = LLMTensorMath.transpose(qlora_xa)
+        let qlora_raw_gb = LLMTensorMath.matmul(qlora_xa_t, qlora_grad_out)
+        let qlora_gb = LLMTensorMath.scale(qlora_raw_gb, qlora_s)
+
+        let qlora_b_t = LLMTensorMath.transpose(qlora_self["b"])
+        let qlora_grad_xa = LLMTensorMath.matmul(qlora_grad_out, qlora_b_t)
+        let qlora_x_t = LLMTensorMath.transpose(qlora_x)
+        let qlora_raw_ga = LLMTensorMath.matmul(qlora_x_t, qlora_grad_xa)
+        let qlora_ga = LLMTensorMath.scale(qlora_raw_ga, qlora_s)
+
+        if qlora_self["grad_a"] != 0 { LLMTensorOps.free(qlora_self["grad_a"]) }
+        if qlora_self["grad_b"] != 0 { LLMTensorOps.free(qlora_self["grad_b"]) }
+        qlora_self["grad_a"] = qlora_ga
+        qlora_self["grad_b"] = qlora_gb
+
+        LLMTensorOps.free(qlora_xa)
+        LLMTensorOps.free(qlora_xa_t)
+        LLMTensorOps.free(qlora_raw_gb)
+        LLMTensorOps.free(qlora_b_t)
+        LLMTensorOps.free(qlora_grad_xa)
+        LLMTensorOps.free(qlora_x_t)
+        LLMTensorOps.free(qlora_raw_ga)
+        return true
+    }
+
+    fn step(qlora_self, qlora_lr) {
+        if qlora_self["grad_a"] != 0 {
+            let qlora_upd_a = LLMTensorMath.scale(qlora_self["grad_a"], qlora_lr)
+            let qlora_new_a = LLMTensorMath.sub(qlora_self["a"], qlora_upd_a)
+            LLMTensorOps.free(qlora_self["a"])
+            LLMTensorOps.free(qlora_upd_a)
+            qlora_self["a"] = qlora_new_a
+        }
+        if qlora_self["grad_b"] != 0 {
+            let qlora_upd_b = LLMTensorMath.scale(qlora_self["grad_b"], qlora_lr)
+            let qlora_new_b = LLMTensorMath.sub(qlora_self["b"], qlora_upd_b)
+            LLMTensorOps.free(qlora_self["b"])
+            LLMTensorOps.free(qlora_upd_b)
+            qlora_self["b"] = qlora_new_b
+        }
+        return true
+    }
+}
+
+// --------------------------------------------------------------------------
+// 20. Direct Preference Optimization (DPO) Loss & Reward Margin
+// --------------------------------------------------------------------------
+class LLMDPOLoss {
+    fn create(dpo_beta) {
+        let dpo_obj = {}
+        dpo_obj["type"] = "DPOLoss"
+        dpo_obj["beta"] = dpo_beta
+        return dpo_obj
+    }
+
+    fn forward(dpo_self, dpo_pi_w, dpo_pi_l, dpo_ref_w, dpo_ref_l) {
+        let dpo_beta = dpo_self["beta"]
+        let dpo_delta_w = dpo_pi_w - dpo_ref_w
+        let dpo_delta_l = dpo_pi_l - dpo_ref_l
+        let dpo_margin = dpo_beta * (dpo_delta_w - dpo_delta_l)
+
+        let dpo_loss = 0.0
+        if dpo_margin >= 0.0 {
+            dpo_loss = LLMMathUtils.ln(1.0 + LLMMathUtils.exp(0.0 - dpo_margin))
+        } else {
+            dpo_loss = (0.0 - dpo_margin) + LLMMathUtils.ln(1.0 + LLMMathUtils.exp(dpo_margin))
+        }
+
+        let dpo_res = {}
+        dpo_res["loss"] = dpo_loss
+        dpo_res["margin"] = dpo_margin
+        dpo_res["reward_chosen"] = dpo_beta * dpo_delta_w
+        dpo_res["reward_rejected"] = dpo_beta * dpo_delta_l
+        dpo_res["chosen_preferred"] = dpo_margin > 0.0
+        return dpo_res
+    }
+
+    fn backward(dpo_self, dpo_pi_w, dpo_pi_l, dpo_ref_w, dpo_ref_l) {
+        let dpo_beta = dpo_self["beta"]
+        let dpo_margin = dpo_beta * ((dpo_pi_w - dpo_ref_w) - (dpo_pi_l - dpo_ref_l))
+        let dpo_sig_neg = 1.0 / (1.0 + LLMMathUtils.exp(dpo_margin))
+
+        let dpo_grads = {}
+        dpo_grads["grad_pi_w"] = 0.0 - (dpo_beta * dpo_sig_neg)
+        dpo_grads["grad_pi_l"] = dpo_beta * dpo_sig_neg
+        return dpo_grads
+    }
+}
+
+// --------------------------------------------------------------------------
+// 21. Training Pipelines: CLMTrainer, SFTTrainer, DPOTrainer
+// --------------------------------------------------------------------------
+class LLMCLMTrainer {
+    fn create(clmtr_model, clmtr_opt, clmtr_vocab_size) {
+        let clmtr_obj = {}
+        clmtr_obj["type"] = "CLMTrainer"
+        clmtr_obj["model"] = clmtr_model
+        clmtr_obj["optimizer"] = clmtr_opt
+        clmtr_obj["vocab_size"] = clmtr_vocab_size
+        clmtr_obj["loss_fn"] = LLMCausalLoss.create(clmtr_vocab_size)
+        clmtr_obj["step_count"] = 0
+        return clmtr_obj
+    }
+
+    fn pack_sequences(clmtr_self, clmtr_seqs, clmtr_max_len, clmtr_pad_id) {
+        let clmtr_packed = []
+        let clmtr_cur = []
+        let clmtr_n = len(clmtr_seqs)
+        let clmtr_i = 0
+        while clmtr_i < clmtr_n {
+            let clmtr_s = clmtr_seqs[clmtr_i]
+            let clmtr_sn = len(clmtr_s)
+            if len(clmtr_cur) + clmtr_sn <= clmtr_max_len {
+                let clmtr_k = 0
+                while clmtr_k < clmtr_sn {
+                    clmtr_cur = Array.push(clmtr_cur, clmtr_s[clmtr_k])
+                    clmtr_k = clmtr_k + 1
+                }
+            } else {
+                while len(clmtr_cur) < clmtr_max_len {
+                    clmtr_cur = Array.push(clmtr_cur, clmtr_pad_id)
+                }
+                clmtr_packed = Array.push(clmtr_packed, clmtr_cur)
+                clmtr_cur = []
+                let clmtr_k = 0
+                while clmtr_k < clmtr_sn && clmtr_k < clmtr_max_len {
+                    clmtr_cur = Array.push(clmtr_cur, clmtr_s[clmtr_k])
+                    clmtr_k = clmtr_k + 1
+                }
+            }
+            clmtr_i = clmtr_i + 1
+        }
+        if len(clmtr_cur) > 0 {
+            while len(clmtr_cur) < clmtr_max_len {
+                clmtr_cur = Array.push(clmtr_cur, clmtr_pad_id)
+            }
+            clmtr_packed = Array.push(clmtr_packed, clmtr_cur)
+        }
+        return clmtr_packed
+    }
+
+    fn train_step(clmtr_self, clmtr_input_emb, clmtr_targets) {
+        clmtr_self["step_count"] = clmtr_self["step_count"] + 1
+        let clmtr_model = clmtr_self["model"]
+        let clmtr_loss_fn = clmtr_self["loss_fn"]
+
+        let clmtr_logits = 0
+        if clmtr_model["type"] == "LLaMA3" {
+            clmtr_logits = LLMLLaMA3Model.forward(clmtr_model, clmtr_input_emb, 0, 0.0)
+        }
+        if clmtr_model["type"] == "Mistral" {
+            clmtr_logits = LLMMistralModel.forward(clmtr_model, clmtr_input_emb, 0, 0.0)
+        }
+        if clmtr_model["type"] == "Gemma" {
+            clmtr_logits = LLMGemmaModel.forward(clmtr_model, clmtr_input_emb, 0, 0.0)
+        }
+        if clmtr_model["type"] == "DeepSeekMoE" {
+            clmtr_logits = LLMDeepSeekMoEModel.forward(clmtr_model, clmtr_input_emb, 0, 0.0)
+        }
+
+        let clmtr_loss = LLMCausalLoss.forward(clmtr_loss_fn, clmtr_logits, clmtr_targets)
+        let clmtr_grad = LLMCausalLoss.backward(clmtr_loss_fn, clmtr_logits, clmtr_targets)
+
+        LLMTensorOps.free(clmtr_logits)
+        LLMTensorOps.free(clmtr_grad)
+
+        let clmtr_metrics = {}
+        clmtr_metrics["loss"] = clmtr_loss
+        clmtr_metrics["step"] = clmtr_self["step_count"]
+        return clmtr_metrics
+    }
+}
+
+class LLMSFTTrainer {
+    fn create(sfttr_model, sfttr_opt, sfttr_chat_template, sfttr_vocab_size) {
+        let sfttr_obj = {}
+        sfttr_obj["type"] = "SFTTrainer"
+        sfttr_obj["model"] = sfttr_model
+        sfttr_obj["optimizer"] = sfttr_opt
+        sfttr_obj["template"] = sfttr_chat_template
+        sfttr_obj["vocab_size"] = sfttr_vocab_size
+        sfttr_obj["loss_fn"] = LLMSFTLoss.create(sfttr_vocab_size)
+        sfttr_obj["step_count"] = 0
+        return sfttr_obj
+    }
+
+    fn train_step(sfttr_self, sfttr_input_emb, sfttr_targets, sfttr_mask) {
+        sfttr_self["step_count"] = sfttr_self["step_count"] + 1
+        let sfttr_model = sfttr_self["model"]
+        let sfttr_loss_fn = sfttr_self["loss_fn"]
+
+        let sfttr_logits = 0
+        if sfttr_model["type"] == "LLaMA3" {
+            sfttr_logits = LLMLLaMA3Model.forward(sfttr_model, sfttr_input_emb, 0, 0.0)
+        }
+        if sfttr_model["type"] == "Mistral" {
+            sfttr_logits = LLMMistralModel.forward(sfttr_model, sfttr_input_emb, 0, 0.0)
+        }
+        if sfttr_model["type"] == "Gemma" {
+            sfttr_logits = LLMGemmaModel.forward(sfttr_model, sfttr_input_emb, 0, 0.0)
+        }
+        if sfttr_model["type"] == "DeepSeekMoE" {
+            sfttr_logits = LLMDeepSeekMoEModel.forward(sfttr_model, sfttr_input_emb, 0, 0.0)
+        }
+
+        let sfttr_loss = LLMSFTLoss.forward(sfttr_loss_fn, sfttr_logits, sfttr_targets, sfttr_mask)
+        let sfttr_grad = LLMSFTLoss.backward(sfttr_loss_fn, sfttr_logits, sfttr_targets, sfttr_mask)
+
+        LLMTensorOps.free(sfttr_logits)
+        LLMTensorOps.free(sfttr_grad)
+
+        let sfttr_metrics = {}
+        sfttr_metrics["loss"] = sfttr_loss
+        sfttr_metrics["step"] = sfttr_self["step_count"]
+        return sfttr_metrics
+    }
+}
+
+class LLMDPOTrainer {
+    fn create(dpotr_policy, dpotr_ref, dpotr_opt, dpotr_beta) {
+        let dpotr_obj = {}
+        dpotr_obj["type"] = "DPOTrainer"
+        dpotr_obj["policy"] = dpotr_policy
+        dpotr_obj["ref"] = dpotr_ref
+        dpotr_obj["optimizer"] = dpotr_opt
+        dpotr_obj["beta"] = dpotr_beta
+        dpotr_obj["loss_fn"] = LLMDPOLoss.create(dpotr_beta)
+        dpotr_obj["step_count"] = 0
+        return dpotr_obj
+    }
+
+    fn train_step(dpotr_self, dpotr_pi_w, dpotr_pi_l, dpotr_ref_w, dpotr_ref_l) {
+        dpotr_self["step_count"] = dpotr_self["step_count"] + 1
+        let dpotr_loss_fn = dpotr_self["loss_fn"]
+
+        let dpotr_res = LLMDPOLoss.forward(dpotr_loss_fn, dpotr_pi_w, dpotr_pi_l, dpotr_ref_w, dpotr_ref_l)
+        let dpotr_grads = LLMDPOLoss.backward(dpotr_loss_fn, dpotr_pi_w, dpotr_pi_l, dpotr_ref_w, dpotr_ref_l)
+
+        let dpotr_out = {}
+        dpotr_out["loss"] = dpotr_res["loss"]
+        dpotr_out["margin"] = dpotr_res["margin"]
+        dpotr_out["reward_chosen"] = dpotr_res["reward_chosen"]
+        dpotr_out["reward_rejected"] = dpotr_res["reward_rejected"]
+        dpotr_out["chosen_preferred"] = dpotr_res["chosen_preferred"]
+        dpotr_out["grad_pi_w"] = dpotr_grads["grad_pi_w"]
+        dpotr_out["grad_pi_l"] = dpotr_grads["grad_pi_l"]
+        dpotr_out["step"] = dpotr_self["step_count"]
+        return dpotr_out
+    }
+}
+
+// --------------------------------------------------------------------------
+// 22. Universal Dot-Syntax Facade: stdllm
 // --------------------------------------------------------------------------
 class stdllm {
+    fn MathUtils() {
+        return LLMMathUtils
+    }
+
     fn RMSNorm(dim, eps) {
         return LLMRMSNorm.create(dim, eps)
     }
@@ -890,5 +1670,41 @@ class stdllm {
 
     fn DeepSeekMoE(vocab_size, dim, n_layers, n_heads, head_dim, kv_lora_rank, num_experts, top_k) {
         return LLMDeepSeekMoEModel.create(vocab_size, dim, n_layers, n_heads, head_dim, kv_lora_rank, num_experts, top_k)
+    }
+
+    fn ChatTemplate(format_name) {
+        return LLMChatTemplate.create(format_name)
+    }
+
+    fn CausalLoss(vocab_size) {
+        return LLMCausalLoss.create(vocab_size)
+    }
+
+    fn SFTLoss(vocab_size) {
+        return LLMSFTLoss.create(vocab_size)
+    }
+
+    fn LoRA(in_features, out_features, rank, alpha) {
+        return LLMLoRA.create(in_features, out_features, rank, alpha)
+    }
+
+    fn QLoRA(in_features, out_features, rank, alpha) {
+        return LLMQLoRA.create(in_features, out_features, rank, alpha)
+    }
+
+    fn DPOLoss(beta) {
+        return LLMDPOLoss.create(beta)
+    }
+
+    fn CLMTrainer(model, optimizer, vocab_size) {
+        return LLMCLMTrainer.create(model, optimizer, vocab_size)
+    }
+
+    fn SFTTrainer(model, optimizer, chat_template, vocab_size) {
+        return LLMSFTTrainer.create(model, optimizer, chat_template, vocab_size)
+    }
+
+    fn DPOTrainer(policy_model, ref_model, optimizer, beta) {
+        return LLMDPOTrainer.create(policy_model, ref_model, optimizer, beta)
     }
 }

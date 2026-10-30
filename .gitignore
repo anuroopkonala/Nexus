@@ -12,6 +12,9 @@ scratch/
 # Temp files from tests
 tests/nx/test_io_temp.txt
 tests/nx/test_stdlib_temp.txt
+tests/nx/test_sphere_out.ppm
+tests/test_model_ckpt.txt
+*.ppm
 
 # OS / editor
 .DS_Store

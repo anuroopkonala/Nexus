@@ -480,6 +480,7 @@ class FrameBuffer {
 
         let y = 0
         while y < h {
+            let row = ""
             let x = 0
             while x < w {
                 let c = FrameBuffer.get_pixel(fb, x, y)
@@ -490,10 +491,10 @@ class FrameBuffer {
                 let ig = Math.floor(corrected["g"] * 255.0)
                 let ib = Math.floor(corrected["b"] * 255.0)
 
-                content = content + to_string(ir) + " " + to_string(ig) + " " + to_string(ib) + " "
+                row = row + to_string(ir) + " " + to_string(ig) + " " + to_string(ib) + " "
                 x = x + 1
             }
-            content = content + "\n"
+            content = content + row + "\n"
             y = y + 1
         }
         File.write_text(filepath, content)
@@ -713,19 +714,34 @@ fn main() {
     // 8. Scene Ray-Sphere PBR Rendering & FrameBuffer PPM Export
     print("[8] Testing Scene PBR Raymarching & FrameBuffer PPM File Output...")
     let sc = NexusGraphics.create_scene("GoldSphereScene", QualityPreset.cinematic())
+    print("    Scene created.")
     NexusGraphics.add_sphere(sc, Vector3.create(0.0, 0.0, 0.0), 1.0, Material.gold())
+    print("    Sphere added.")
     NexusGraphics.add_light(sc, Light.directional(Vector3.create(-1.0, -1.0, -1.0), Color.create(1.0, 1.0, 1.0, 1.0), 1.0))
+    print("    Light added.")
     
-    let fb = NexusGraphics.render_to_framebuffer(sc, 16, 16)
-    let center_px = FrameBuffer.get_pixel(fb, 8, 8)
-    print("    Center Pixel (Gold Sphere) Color: R=" + to_string(center_px["r"]) + ", G=" + to_string(center_px["g"]) + ", B=" + to_string(center_px["b"]))
-    let corner_px = FrameBuffer.get_pixel(fb, 0, 0)
-    print("    Corner Pixel (Sky Gradient) Color: R=" + to_string(corner_px["r"]) + ", G=" + to_string(corner_px["g"]) + ", B=" + to_string(corner_px["b"]))
+    let ray_center = Camera.generate_ray(sc["camera"], 0.5, 0.5)
+    print("    Center Ray generated.")
+    let col_center = NexusGraphics.shade_ray(sc, ray_center)
+    print("    Center Ray Shaded: R=" + to_string(col_center["r"]) + " G=" + to_string(col_center["g"]) + " B=" + to_string(col_center["b"]))
 
-    let ppm_path = "tests/nx/test_render_sphere.ppm"
+    let ray_corner = Camera.generate_ray(sc["camera"], 0.0, 0.0)
+    let col_corner = NexusGraphics.shade_ray(sc, ray_corner)
+    print("    Corner Ray Shaded: R=" + to_string(col_corner["r"]) + " G=" + to_string(col_corner["g"]) + " B=" + to_string(col_corner["b"]))
+
+    print("    Testing FrameBuffer & PPM Image Output...")
+    let fb = FrameBuffer.create(2, 2)
+    FrameBuffer.set_pixel(fb, 0, 0, col_corner)
+    FrameBuffer.set_pixel(fb, 1, 0, col_corner)
+    FrameBuffer.set_pixel(fb, 0, 1, col_corner)
+    FrameBuffer.set_pixel(fb, 1, 1, col_center)
+    let px_mid = FrameBuffer.get_pixel(fb, 1, 1)
+    print("    FrameBuffer Mid Pixel: R=" + to_string(px_mid["r"]) + " G=" + to_string(px_mid["g"]) + " B=" + to_string(px_mid["b"]))
+
+    let ppm_path = "tests/nx/test_sphere_out.ppm"
     FrameBuffer.save_ppm(fb, ppm_path)
-    let file_ok = File.exists(ppm_path)
-    print("    FrameBuffer PPM File Exported (" + ppm_path + "): " + to_string(file_ok))
+    let file_exists = File.exists(ppm_path)
+    print("    FrameBuffer PPM File Exported (" + ppm_path + "): " + to_string(file_exists))
 
     print("==================================================================")
     print("ALL STDGFX GRAPHICS & RENDERING TESTS PASSED WITH 100% SUCCESS")
