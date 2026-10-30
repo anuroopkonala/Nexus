@@ -1183,22 +1183,26 @@ class LLMSFTLoss {
 // --------------------------------------------------------------------------
 class LLMLoRA {
     fn create(lora_in_features, lora_out_features, lora_rank, lora_alpha) {
+        if lora_in_features <= 0.0 { lora_in_features = 1.0 }
+        if lora_out_features <= 0.0 { lora_out_features = 1.0 }
+        let lora_rank_safe = lora_rank
+        if lora_rank_safe <= 0.0 { lora_rank_safe = 1.0 }
         let lora_scale = 1.0 / Math.sqrt(lora_in_features)
         let lora_raw_w0 = llm_torch.randn(lora_in_features, lora_out_features)
         let lora_w0 = LLMTensorMath.scale(lora_raw_w0, lora_scale)
 
-        let lora_raw_a = llm_torch.randn(lora_in_features, lora_rank)
+        let lora_raw_a = llm_torch.randn(lora_in_features, lora_rank_safe)
         let lora_a = LLMTensorMath.scale(lora_raw_a, lora_scale)
 
-        let lora_b = LLMTensorOps.create([lora_rank * 1.0, lora_out_features * 1.0], 0.0)
+        let lora_b = LLMTensorOps.create([lora_rank_safe * 1.0, lora_out_features * 1.0], 0.0)
 
         let lora_obj = {}
         lora_obj["type"] = "LoRA"
         lora_obj["in_features"] = lora_in_features
         lora_obj["out_features"] = lora_out_features
-        lora_obj["rank"] = lora_rank
+        lora_obj["rank"] = lora_rank_safe
         lora_obj["alpha"] = lora_alpha
-        lora_obj["scaling"] = lora_alpha / lora_rank
+        lora_obj["scaling"] = lora_alpha / lora_rank_safe
         lora_obj["w0"] = lora_w0
         lora_obj["a"] = lora_a
         lora_obj["b"] = lora_b
@@ -1313,6 +1317,10 @@ class LLMLoRA {
 // --------------------------------------------------------------------------
 class LLMQLoRA {
     fn create(qlora_in_features, qlora_out_features, qlora_rank, qlora_alpha) {
+        if qlora_in_features <= 0.0 { qlora_in_features = 1.0 }
+        if qlora_out_features <= 0.0 { qlora_out_features = 1.0 }
+        let qlora_rank_safe = qlora_rank
+        if qlora_rank_safe <= 0.0 { qlora_rank_safe = 1.0 }
         let qlora_scale = 1.0 / Math.sqrt(qlora_in_features)
         let qlora_raw_w0 = llm_torch.randn(qlora_in_features, qlora_out_features)
         let qlora_w0 = LLMTensorMath.scale(qlora_raw_w0, qlora_scale)
@@ -1321,17 +1329,17 @@ class LLMQLoRA {
         let qlora_w0_q4 = LLMTensorMath.quantize(qlora_w0, 2.0)
         LLMTensorOps.free(qlora_w0)
 
-        let qlora_raw_a = llm_torch.randn(qlora_in_features, qlora_rank)
+        let qlora_raw_a = llm_torch.randn(qlora_in_features, qlora_rank_safe)
         let qlora_a = LLMTensorMath.scale(qlora_raw_a, qlora_scale)
-        let qlora_b = LLMTensorOps.create([qlora_rank, qlora_out_features], 0.0)
+        let qlora_b = LLMTensorOps.create([qlora_rank_safe, qlora_out_features], 0.0)
 
         let qlora_obj = {}
         qlora_obj["type"] = "QLoRA"
         qlora_obj["in_features"] = qlora_in_features
         qlora_obj["out_features"] = qlora_out_features
-        qlora_obj["rank"] = qlora_rank
+        qlora_obj["rank"] = qlora_rank_safe
         qlora_obj["alpha"] = qlora_alpha
-        qlora_obj["scaling"] = qlora_alpha / qlora_rank
+        qlora_obj["scaling"] = qlora_alpha / qlora_rank_safe
         qlora_obj["w0_q4"] = qlora_w0_q4
         qlora_obj["a"] = qlora_a
         qlora_obj["b"] = qlora_b
@@ -2098,6 +2106,7 @@ class LLMStateGraph {
         let csg_obj = {}
         csg_obj["type"] = "CompiledStateGraph"
         csg_obj["graph"] = sg_self
+        csg_obj["max_steps"] = 1000
         csg_obj["checkpoints"] = []
         return csg_obj
     }
@@ -2108,7 +2117,10 @@ class LLMCompiledStateGraph {
         let csg_state = csg_initial_state
         let csg_cur_node = csg_self["graph"]["entry_point"]
         let csg_step = 0
-        let csg_max_steps = 100
+        let csg_max_steps = 1000
+        if csg_self["max_steps"] != 0 {
+            csg_max_steps = csg_self["max_steps"]
+        }
         let csg_history = []
 
         while csg_cur_node != "__end__" {
@@ -2513,5 +2525,37 @@ class stdllm {
 
     fn RAGRetriever(vector_store, top_k) {
         return LLMRAGRetriever.create(vector_store, top_k)
+    }
+
+    fn format_prompt(pt, vars) {
+        return LLMPromptTemplate.format(pt, vars)
+    }
+
+    fn parse_json(parser, text) {
+        return LLMJSONOutputParser.parse(parser, text)
+    }
+
+    fn parse_str(parser, text) {
+        return LLMStrOutputParser.parse(parser, text)
+    }
+
+    fn invoke_chain(chain, input_data) {
+        return LLMChain.invoke(chain, input_data)
+    }
+
+    fn invoke_graph(compiled_graph, initial_state) {
+        return LLMCompiledStateGraph.invoke(compiled_graph, initial_state)
+    }
+
+    fn get_graph_checkpoints(compiled_graph) {
+        return LLMCompiledStateGraph.get_checkpoints(compiled_graph)
+    }
+
+    fn vector_add(vs, doc_id, emb, meta) {
+        return LLMVectorStore.add(vs, doc_id, emb, meta)
+    }
+
+    fn vector_search(vs, query_emb, top_k) {
+        return LLMVectorStore.similarity_search(vs, query_emb, top_k)
     }
 }

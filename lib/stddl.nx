@@ -62,6 +62,8 @@ class Module {
 // --------------------------------------------------------------------------
 class DenseLayer {
     fn create(in_features, out_features) {
+        if in_features <= 0.0 { in_features = 1.0 }
+        if out_features <= 0.0 { out_features = 1.0 }
         // He / Kaiming normal weight initialization: scale = sqrt(2 / in_features)
         let scale = Math.sqrt(2.0 / in_features)
         let raw_w = torch.randn(in_features, out_features)
@@ -275,8 +277,11 @@ class RMSNormLayer {
 class DropoutLayer {
     fn create(drop_prob) {
         let layer = Module.create("Dropout")
-        layer["p"] = drop_prob
-        layer["scale"] = 1.0 / (1.0 - drop_prob)
+        let p = drop_prob
+        if p >= 0.9999 { p = 0.9999 }
+        if p < 0.0 { p = 0.0 }
+        layer["p"] = p
+        layer["scale"] = 1.0 / (1.0 - p)
         layer["last_mask"] = 0
         return layer
     }
@@ -306,9 +311,11 @@ class ResidualLayer {
         layer["sub_module"] = sub_module
         layer["last_x"] = 0
 
-        let p = sub_module["params"]
-        if p != 0 {
-            layer["params"] = p
+        if sub_module != 0 {
+            let p = sub_module["params"]
+            if p != 0 {
+                layer["params"] = p
+            }
         }
         return layer
     }
@@ -316,14 +323,24 @@ class ResidualLayer {
     fn forward(layer, x) {
         layer["last_x"] = x
         let sub = layer["sub_module"]
-        let fx = DenseLayer.forward(sub, x)
+        if sub == 0 { return x }
+        let t = sub["type"]
+        let fx = x
+        if t == "Dense" { fx = DenseLayer.forward(sub, x) }
+        if t == "Conv2D" { fx = Conv2DLayer.forward(sub, x) }
+        if t == "Sequential" { fx = SequentialModel.forward(sub, x) }
         let out = TensorMath.add(x, fx)
         return out
     }
 
     fn backward(layer, grad_output) {
         let sub = layer["sub_module"]
-        let df = DenseLayer.backward(sub, grad_output)
+        if sub == 0 { return grad_output }
+        let t = sub["type"]
+        let df = grad_output
+        if t == "Dense" { df = DenseLayer.backward(sub, grad_output) }
+        if t == "Conv2D" { df = Conv2DLayer.backward(sub, grad_output) }
+        if t == "Sequential" { df = SequentialModel.backward(sub, grad_output) }
         let dx = TensorMath.add(grad_output, df)
         return dx
     }
@@ -1068,11 +1085,15 @@ class CosineAnnealingLRScheduler {
 
         let lr = base_lr
         if s < w {
-            lr = eta_min + (s / w) * (base_lr - eta_min)
+            let w_safe = w
+            if w_safe <= 0.0 { w_safe = 1.0 }
+            lr = eta_min + (s / w_safe) * (base_lr - eta_min)
         }
         let w_minus = w - 0.5
         if s > w_minus {
-            let p = (s - w) / (t_max - w)
+            let denom = t_max - w
+            if denom <= 0.0 { denom = 1.0 }
+            let p = (s - w) / denom
             if p > 1.0 {
                 p = 1.0
             }
@@ -1090,6 +1111,7 @@ class CosineAnnealingLRScheduler {
 
 class StepLRScheduler {
     fn create(optimizer, step_size, gamma) {
+        if step_size <= 0.0 { step_size = 1.0 }
         let sched = {}
         sched["type"] = "StepLR"
         sched["optimizer"] = optimizer
@@ -1104,6 +1126,7 @@ class StepLRScheduler {
         sched["current_step"] = sched["current_step"] + 1.0
         let s = sched["current_step"]
         let sz = sched["step_size"]
+        if sz <= 0.0 { sz = 1.0 }
         if s % sz == 0.0 {
             sched["optimizer"]["lr"] = sched["optimizer"]["lr"] * sched["gamma"]
         }
@@ -1117,6 +1140,7 @@ class StepLRScheduler {
 
 class LinearLRScheduler {
     fn create(optimizer, start_factor, end_factor, total_iters) {
+        if total_iters <= 0.0 { total_iters = 1.0 }
         let sched = {}
         sched["type"] = "LinearLR"
         sched["optimizer"] = optimizer
@@ -1132,6 +1156,7 @@ class LinearLRScheduler {
         sched["current_step"] = sched["current_step"] + 1.0
         let s = sched["current_step"]
         let tot = sched["total_iters"]
+        if tot <= 0.0 { tot = 1.0 }
         let frac = s / tot
         if frac > 1.0 {
             frac = 1.0
@@ -1604,5 +1629,9 @@ class stddl {
     // Declarative Trainer
     fn Trainer(model, optimizer, loss_fn) {
         return TrainerEngine.create(model, optimizer, loss_fn)
+    }
+
+    fn free(handle) {
+        return TensorOps.free(handle)
     }
 }
